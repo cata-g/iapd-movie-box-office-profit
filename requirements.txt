@@ -1,0 +1,8 @@
+requests>=2.31
+pandas>=2.1
+pyarrow>=14.0
+beautifulsoup4>=4.12
+lxml>=4.9
+python-dotenv>=1.0
+tqdm>=4.66
+rapidfuzz>=3.5
