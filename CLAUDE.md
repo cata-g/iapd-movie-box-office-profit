@@ -26,11 +26,11 @@ Box Office Mojo (prioritar) → The Numbers → Wikidata → TMDB
 ## Structura repo
 ```
 extraction/        # un script per sursă + utils.py
-data/raw/<sursa>/  # cache brut HTML/JSON (în .gitignore)
+data/raw/<sursa>/  # cache brut HTML/JSON
 data/interim/      # tabel curat per sursă + manifest
 data/processed/    # dataset final
 docs/
-logs/              # în .gitignore
+logs/
 ```
 
 ## Reguli tehnice

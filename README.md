@@ -18,12 +18,11 @@ cp .env.example .env
 
 ```
 extraction/   — crawlere per sursă + utils.py (cache, retry, rate limit)
+data/raw/     — cache brut per sursă (HTML/JSON descărcat)
 data/interim/ — tabele curate per sursă + manifest
 data/processed/ — dataset final
 docs/         — documentație
 ```
-
-`data/raw/` (cache brut) și `logs/` nu sunt în git; vor fi publicate ca arhivă separată.
 
 ## Test utilitare
 
