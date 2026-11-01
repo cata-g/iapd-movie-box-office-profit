@@ -25,7 +25,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from extraction.utils import PROJECT_ROOT, _get_logger, fetch
+from extraction.utils import (
+    BUDGET_RANGE, GROSS_RANGE, PROJECT_ROOT, YEAR_MAX, YEAR_MIN, _get_logger, fetch, sparql,
+)
 
 DBPEDIA_SPARQL = "https://dbpedia.org/sparql"
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
@@ -38,14 +40,6 @@ WIKIDATA_BATCH = 200
 
 OUT_PATH = PROJECT_ROOT / "data" / "interim" / "dbpedia.parquet"
 UNMATCHED_PATH = PROJECT_ROOT / "data" / "interim" / "dbpedia_unmatched.csv"
-
-# Same window as the TMDB extraction (#2)
-YEAR_MIN, YEAR_MAX = 1950, 2024
-
-# Plausible USD ranges. Outside them the value is almost always a misparse:
-# another currency tagged as usDollar (rupiah, yen) or "$0.65 million" read as 0.65.
-BUDGET_RANGE = (10_000, 500_000_000)
-GROSS_RANGE = (1_000, 3_000_000_000)   # Avatar, the record, is $2.92B
 
 # gross/budget outside this range is usually a currency/unit error, but real outliers
 # exist (Paranormal Activity), so these rows are only flagged, not dropped.
@@ -66,11 +60,10 @@ log = _get_logger("dbpedia")
 # Step 1: DBpedia
 # ---------------------------------------------------------------------------
 def _sparql(endpoint: str, source: str, query: str) -> list[dict]:
-    fmt = "application/sparql-results+json" if source == "dbpedia" else "json"
-    data = fetch(endpoint, source=source, params={"query": query, "format": fmt})
-    if data is None:
+    bindings = sparql(endpoint, source, query)
+    if bindings is None:
         raise RuntimeError(f"SPARQL query failed on {endpoint}, see logs/{source}.log")
-    return data["results"]["bindings"]
+    return bindings
 
 
 def fetch_usd_values(prop: str, only: list[str] | None = None) -> pd.DataFrame:
