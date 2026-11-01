@@ -33,6 +33,7 @@ RATE_LIMITS: dict[str, float] = {
     "bom": 1.0,            # 1 req/s (Box Office Mojo)
     "wikipedia": 1 / 5,   # 5 req/s
     "wikidata": 1 / 5,
+    "dbpedia": 1.0,        # public SPARQL endpoint, be gentle
 }
 DEFAULT_RATE = 1.0
 
