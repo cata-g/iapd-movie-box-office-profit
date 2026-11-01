@@ -12,16 +12,18 @@ Dataseturile gata (Kaggle etc.) **NU sunt permise** — totul se extrage de noi.
 
 ### Ordinea issue-urilor
 1. **#1** Setup repo + utilitare comune ← *ești aici*
-2. **#2** TMDB, **#3** The Numbers, **#4** Wikidata + Wikipedia (independente)
+2. **#2** TMDB, **#3** DBpedia, **#4** Wikidata + Wikipedia (independente)
 3. **#5** Manifest + decizia la 10.000 (postează numărătoarea ca comentariu, oprește-te dacă < 10k)
 4. **#6** Box Office Mojo (rulare completă doar după #5)
 5. **#27** Integrare și curățare → `data/processed/movies_dataset.csv`
 
 ### Surse pentru buget (resursă rară — reuniune)
-TMDB → The Numbers → Wikidata → Wikipedia
+TMDB → DBpedia → Wikidata → Wikipedia
 
 ### Surse pentru încasări mondiale
-Box Office Mojo (prioritar) → The Numbers → Wikidata → TMDB
+Box Office Mojo (prioritar) → DBpedia → Wikidata → TMDB
+
+> The Numbers a fost scos (nov. 2026): lista `/movie/budgets` nu mai e publică, iar Terms of Service interzic colectarea automată pentru seturi de date ML fără acord scris.
 
 ## Structura repo
 ```
@@ -37,7 +39,7 @@ logs/
 - **Python 3.11+**. Dependențe în `requirements.txt`.
 - **Toate requesturile HTTP** trec prin `extraction/utils.py`:
   - Cache pe disc în `data/raw/<sursa>/` (sha256 al url+params)
-  - Rate limit: TMDB 20 req/s, The Numbers 1 req/s, BOM 1 req/s, Wikipedia 5 req/s
+  - Rate limit: TMDB 20 req/s, DBpedia 1 req/s, BOM 1 req/s, Wikipedia 5 req/s
   - Retry 3× cu backoff exponențial pe 429/5xx; 404 → `None` fără retry
   - User-Agent: `iapd-student-project (contact: barabas.catalin@gmail.com)`
   - Logging în `logs/<sursa>.log`
