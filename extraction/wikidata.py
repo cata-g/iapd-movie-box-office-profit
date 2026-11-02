@@ -15,6 +15,8 @@ Pipeline:
      with their currency, P2142's "valid in place" qualifier, P144, P4947 (tmdb_id).
   3. Amounts are kept only in USD (wd:Q4917); other currencies are counted, not converted.
      Box office counts as worldwide when it has no place qualifier or place = worldwide.
+  4. Adaptation category (book, comics, tv, video_game, stage, film, true_story...) from
+     the type of the source work (P144 -> P31), queried only for adaptations.
 """
 
 import argparse
@@ -175,6 +177,70 @@ def _money(details: pd.DataFrame, kind: str, name: str, worldwide_only: bool = F
 
 
 # ---------------------------------------------------------------------------
+# Step 3: adaptation source types (P144 -> P31)
+# Separate query so the step-2 cache stays valid.
+# ---------------------------------------------------------------------------
+SOURCE_TYPES_QUERY = """
+SELECT ?film ?value ?label WHERE {
+  VALUES ?film { %s }
+  ?film wdt:P144 ?src . ?src wdt:P31 ?value .
+  OPTIONAL { ?value rdfs:label ?label . FILTER(LANG(?label) = "en") }
+}"""
+
+# Source-work type label -> adaptation category (first matching keyword wins).
+ADAPTATION_KEYWORDS = [
+    ("comics", ["comic", "manga", "manhwa", "graphic novel"]),
+    ("video_game", ["video game"]),
+    ("tv", ["television", "tv series", "anime", "web series"]),
+    ("stage", ["play", "musical", "dramatic", "opera", "theatr", "ballet"]),
+    ("film", ["film"]),
+    ("book", ["literary", "written work", "book", "novel", "story", "tale", "poem", "novella", "article"]),
+    ("other", ["fictional", "character"]),
+    ("true_story", ["human", "event", "battle", "war", "crime", "disaster", "murder", "expedition"]),
+    ("franchise", ["franchise", "brand", "toy", "game", "song", "album"]),
+]
+# A film based on several works gets the first category in this order
+ADAPTATION_PRIORITY = ["comics", "video_game", "tv", "book", "stage", "film", "true_story", "franchise", "other"]
+
+
+def _batched_sparql(template: str, qids: list[str], label: str) -> list[dict]:
+    rows = []
+    qids = sorted(set(qids))
+    for i in range(0, len(qids), DETAILS_BATCH):
+        bindings = sparql(WIKIDATA_SPARQL, "wikidata", template % " ".join(f"wd:{q}" for q in qids[i:i + DETAILS_BATCH]))
+        if bindings is None:
+            raise RuntimeError(f"Wikidata {label} query failed (batch {i}), see logs/wikidata.log")
+        rows += bindings
+        print(f"\r{label}: {min(i + DETAILS_BATCH, len(qids))}/{len(qids)}", end="", flush=True)
+    print()
+    return rows
+
+
+def _adaptation_category(type_label: str) -> str:
+    t = type_label.lower()
+    for category, keywords in ADAPTATION_KEYWORDS:
+        if any(k in t for k in keywords):
+            return category
+    return "other"
+
+
+def fetch_adaptation_types(qids: list[str]) -> pd.DataFrame:
+    """One row per adaptation: its category and the raw type labels of its source work(s)."""
+    src = pd.DataFrame([{
+        "wikidata_id": _qid(b["film"]["value"]),
+        "label": b.get("label", {}).get("value", _qid(b["value"]["value"])),
+    } for b in _batched_sparql(SOURCE_TYPES_QUERY, qids, "Surse ecranizări")],
+        columns=["wikidata_id", "label"])
+    src["category"] = src["label"].map(_adaptation_category)
+    rank = {c: i for i, c in enumerate(ADAPTATION_PRIORITY)}
+    src = src.assign(_rank=src["category"].map(rank)).sort_values(["wikidata_id", "_rank"])
+    return pd.DataFrame({
+        "adaptation_type": src.groupby("wikidata_id")["category"].first(),
+        "adaptation_source_types": src.drop_duplicates(["wikidata_id", "label"]).groupby("wikidata_id")["label"].agg("|".join),
+    })
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def build(only: list[str] | None = None) -> pd.DataFrame:
@@ -193,8 +259,11 @@ def build(only: list[str] | None = None) -> pd.DataFrame:
           .join(first_date).join(tmdb)
           .join(_money(details, "cost", "budget_wd"))
           .join(_money(details, "box_office", "gross_wd", worldwide_only=True))
+          .join(fetch_adaptation_types(sorted(adaptations)))
           .reset_index())
     df["is_adaptation"] = df["wikidata_id"].isin(adaptations)
+    # P144 pointing to an item without P31 still makes it an adaptation, of unknown type
+    df.loc[df["is_adaptation"] & df["adaptation_type"].isna(), "adaptation_type"] = "other"
     df["year"] = df["release_date_wd"].dt.year.astype("Int64")
     df["tmdb_id"] = pd.to_numeric(df["tmdb_id"], errors="coerce").astype("Int64")
     for col in ["budget_wd_n_values", "gross_wd_n_values"]:
@@ -208,7 +277,7 @@ def build(only: list[str] | None = None) -> pd.DataFrame:
 
     return df[[
         "imdb_id", "wikidata_id", "tmdb_id", "enwiki_title", "year", "release_date_wd",
-        "budget_wd", "gross_wd", "is_adaptation",
+        "budget_wd", "gross_wd", "is_adaptation", "adaptation_type", "adaptation_source_types",
         "budget_wd_n_values", "gross_wd_n_values", "budget_wd_other_currency", "gross_wd_other_currency",
         "budget_wd_implausible", "gross_wd_implausible", "imdb_n_ids",
     ]]
@@ -237,7 +306,8 @@ def report(df: pd.DataFrame) -> str:
         f"Încasări mondiale în USD (gross_wd): {df['gross_wd'].notna().sum()}",
         f"Încasări doar în altă monedă: {df['gross_wd_other_currency'].notna().sum()}",
         f"Cu buget și încasări în USD: {(df['budget_wd'].notna() & df['gross_wd'].notna()).sum()}",
-        f"Ecranizări (P144): {df['is_adaptation'].sum()}",
+        f"Ecranizări (P144): {df['is_adaptation'].sum()} "
+        f"({', '.join(f'{k}={v}' for k, v in df['adaptation_type'].value_counts().items())})",
         f"Valori neplauzibile șterse: {df['budget_wd_implausible'].sum()} bugete, {df['gross_wd_implausible'].sum()} încasări",
         f"Ambiguități: {(df['budget_wd_n_values'] > 1).sum()} costuri cu mai multe valori, "
         f"{(df['gross_wd_n_values'] > 1).sum()} încasări cu mai multe valori, "

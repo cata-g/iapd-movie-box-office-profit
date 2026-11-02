@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from extraction.wikipedia import infobox_field, parse_money
+from extraction.wikipedia import infobox_field, parse_money, parse_names
 
 # raw infobox value -> (value, is_range, has_other_currency)
 CASES = {
@@ -56,7 +56,24 @@ def test_infobox_field():
     print("Test 2 passed: câmpurile din infobox sunt extrase corect.")
 
 
+def test_parse_names():
+    cases = {
+        "[[Warner Bros. Pictures]]<ref name=\"AFI\"/>": ["Warner Bros. Pictures"],
+        "20th Century Fox<ref name=\"BFI\"/>{{efn|name=Disney|Distributed by [[Walt Disney Studios Motion Pictures]] in the 2022 re-release}}": ["20th Century Fox"],
+        "{{plainlist| * Paramount Pictures (United States and Canada) * 20th Century Fox (International)}}": ["Paramount Pictures", "20th Century Fox"],
+        "{{Plainlist| * [[Roadshow Entertainment]] (Australia) * [[Warner Bros. Pictures]] (International)}}": ["Warner Bros. Pictures", "Roadshow Entertainment"],
+        "[[Columbia Pictures|Columbia]]<br />[[Sony Pictures Releasing]]": ["Columbia", "Sony Pictures Releasing"],
+        "{{ill|Neue Visionen|de|Neue Visionen Filmverleih}}": ["Neue Visionen"],
+        "": [],
+    }
+    for raw, expected in cases.items():
+        got = parse_names(raw)
+        assert got == expected, f"{raw!r}: expected {expected}, got {got}"
+    print(f"Test 3 passed: {len(cases)} formate de distribuitori parsate corect.")
+
+
 if __name__ == "__main__":
     test_parse_money()
     test_infobox_field()
+    test_parse_names()
     print("\nToate testele au trecut.")
