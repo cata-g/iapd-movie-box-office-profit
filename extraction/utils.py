@@ -261,3 +261,26 @@ async def fetch_async(
             await asyncio.sleep(backoff ** attempt)
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Manifest helpers (folosite de #5 și #6)
+# ---------------------------------------------------------------------------
+
+MANIFEST_FILE = PROJECT_ROOT / "data" / "interim" / "movies_manifest.json"
+
+
+def load_manifest() -> dict:
+    if MANIFEST_FILE.exists():
+        return json.loads(MANIFEST_FILE.read_text(encoding="utf-8"))
+    return {}
+
+
+def mark(imdb_id: str, source: str, status: str) -> None:
+    manifest = load_manifest()
+    if imdb_id in manifest:
+        manifest[imdb_id]["status"][source] = status
+        MANIFEST_FILE.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
