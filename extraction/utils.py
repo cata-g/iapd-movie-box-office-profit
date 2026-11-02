@@ -3,6 +3,7 @@ HTTP utility with disk cache, per-source rate limiting, retry with exponential b
 and per-source file logging.
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -143,5 +144,91 @@ def fetch(
         logger.info("FETCHED %s → %s", url, cache_file.name)
 
         return resp.json() if as_json else resp.text
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Async fetch (aiohttp) — rate-limited, cached, with retry
+# ---------------------------------------------------------------------------
+
+class _AsyncRateLimiter:
+    """Serializes async requests to at most `rate` per second."""
+
+    def __init__(self, rate: float):
+        self._interval = 1.0 / rate
+        self._lock: Optional[asyncio.Lock] = None
+        self._last = 0.0
+
+    async def wait(self) -> None:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            now = asyncio.get_event_loop().time()
+            delay = self._interval - (now - self._last)
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self._last = asyncio.get_event_loop().time()
+
+
+_async_limiters: dict[str, _AsyncRateLimiter] = {}
+
+
+def _get_async_limiter(source: str) -> _AsyncRateLimiter:
+    if source not in _async_limiters:
+        interval = RATE_LIMITS.get(source, DEFAULT_RATE)
+        rate = 1.0 / interval
+        _async_limiters[source] = _AsyncRateLimiter(rate)
+    return _async_limiters[source]
+
+
+async def fetch_async(
+    session: "aiohttp.ClientSession",
+    url: str,
+    source: str,
+    params: Optional[dict] = None,
+    as_json: bool = True,
+) -> Optional[Union[dict, str]]:
+    """Async version of fetch — same cache, rate limiting, and retry logic."""
+    import aiohttp
+
+    logger = _get_logger(source)
+    cache_file = _cache_path(source, url, params, as_json)
+
+    if cache_file.exists():
+        content = cache_file.read_text(encoding="utf-8")
+        return json.loads(content) if as_json else content
+
+    limiter = _get_async_limiter(source)
+    headers = {"User-Agent": USER_AGENT}
+    timeout = aiohttp.ClientTimeout(total=30)
+    max_retries = 3
+    backoff = 2.0
+
+    for attempt in range(1, max_retries + 1):
+        await limiter.wait()
+        try:
+            async with session.get(url, params=params, headers=headers, timeout=timeout) as resp:
+                if resp.status == 404:
+                    logger.info("404 %s", url)
+                    return None
+                if resp.status == 429 or resp.status >= 500:
+                    logger.warning("HTTP %d (attempt %d/%d): %s", resp.status, attempt, max_retries, url)
+                    if attempt == max_retries:
+                        return None
+                    await asyncio.sleep(backoff ** attempt)
+                    continue
+                if not resp.ok:
+                    logger.warning("HTTP %d %s", resp.status, url)
+                    return None
+                text = await resp.text()
+                cache_file.write_text(text, encoding="utf-8")
+                logger.info("FETCHED %s → %s", url, cache_file.name)
+                return json.loads(text) if as_json else text
+        except Exception as exc:
+            logger.warning("Async error (attempt %d/%d): %s — %s", attempt, max_retries, url, exc)
+            if attempt == max_retries:
+                return None
+            await asyncio.sleep(backoff ** attempt)
 
     return None

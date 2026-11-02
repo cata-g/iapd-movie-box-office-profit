@@ -8,6 +8,7 @@ Output:
     data/interim/tmdb_movies.parquet
 """
 
+import asyncio
 import calendar
 import json
 import logging
@@ -15,12 +16,13 @@ import os
 import sys
 from pathlib import Path
 
+import aiohttp
 import pandas as pd
 from dotenv import load_dotenv
 from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from extraction.utils import fetch, RAW_DIR, LOGS_DIR
+from extraction.utils import fetch, fetch_async, RAW_DIR
 
 load_dotenv()
 
@@ -45,7 +47,6 @@ logger = logging.getLogger(f"iapd.{SOURCE}")
 # ---------------------------------------------------------------------------
 
 def _p(**kwargs):
-    """Build params dict with api_key included."""
     return {"api_key": TMDB_KEY, **{k: v for k, v in kwargs.items() if v is not None}}
 
 
@@ -76,21 +77,15 @@ def _collect_ids_from_pages(first_resp, page_fetcher, max_pages=500):
 
 
 # ---------------------------------------------------------------------------
-# Phase 1 — Discover
+# Phase 1 — Discover (sync, already fast with cache)
 # ---------------------------------------------------------------------------
 
 def discover_year(year):
     first = _discover_page(1, year=year)
     if not first:
         return []
-
     if first.get("total_pages", 1) <= 500:
-        return _collect_ids_from_pages(
-            first,
-            lambda p: _discover_page(p, year=year),
-        )
-
-    # Year has >10 000 films — split by month
+        return _collect_ids_from_pages(first, lambda p: _discover_page(p, year=year))
     ids = []
     for month in range(1, 13):
         last_day = calendar.monthrange(year, month)[1]
@@ -107,10 +102,8 @@ def discover_year(year):
 
 
 def get_all_candidates():
-    """Discover all candidates 1950-2024, resumable via discovered_ids.json."""
     (RAW_DIR / "tmdb").mkdir(parents=True, exist_ok=True)
     discovered = json.loads(DISCOVERED_FILE.read_text()) if DISCOVERED_FILE.exists() else {}
-
     for year in tqdm(YEARS, desc="Discovering years"):
         if str(year) in discovered:
             continue
@@ -118,26 +111,16 @@ def get_all_candidates():
         discovered[str(year)] = ids
         DISCOVERED_FILE.write_text(json.dumps(discovered))
         logger.info("Year %d: %d films", year, len(ids))
-
     all_ids = {id_ for ids in discovered.values() for id_ in ids}
     logger.info("Total unique candidates: %d", len(all_ids))
     return list(all_ids)
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 — Details
+# Parsing helpers
 # ---------------------------------------------------------------------------
 
-def fetch_movie_details(tmdb_id):
-    return fetch(
-        f"{BASE}/movie/{tmdb_id}",
-        SOURCE,
-        params=_p(append_to_response="credits,release_dates,keywords"),
-    )
-
-
 def _extract_release_date(release_dates_data):
-    """Earliest theatrical date: type 3 preferred, fallback type 2."""
     if not release_dates_data:
         return None
     candidates = []
@@ -175,15 +158,15 @@ def _parse_movie(data):
     credits = data.get("credits") or {}
     release_dates = data.get("release_dates") or {}
     keywords_data = data.get("keywords") or {}
-
     directors = [
         c["id"] for c in credits.get("crew", [])
         if c.get("department") == "Directing" and c.get("job") == "Director"
     ]
     cast_top3 = [
-        c["id"] for c in sorted(credits.get("cast", []), key=lambda x: x.get("order", 9999))[:3]
+        c["id"] for c in sorted(
+            credits.get("cast", []), key=lambda x: x.get("order", 9999)
+        )[:3]
     ]
-
     return {
         "tmdb_id": data["id"],
         "imdb_id": data.get("imdb_id"),
@@ -209,27 +192,59 @@ def _parse_movie(data):
 
 
 # ---------------------------------------------------------------------------
-# Phase 3 — Collections → sequel_number
+# Phase 2 — Details (async, 20 req/s)
 # ---------------------------------------------------------------------------
 
-def fetch_collection(collection_id):
-    return fetch(f"{BASE}/collection/{collection_id}", SOURCE, params=_p())
+async def _fetch_details_async(session, tmdb_id, pbar):
+    data = await fetch_async(
+        session,
+        f"{BASE}/movie/{tmdb_id}",
+        SOURCE,
+        params=_p(append_to_response="credits,release_dates,keywords"),
+    )
+    pbar.update(1)
+    return _parse_movie(data)
 
 
-def _compute_sequel_numbers(rows):
+async def fetch_all_details_async(all_ids):
+    rows = []
+    with tqdm(total=len(all_ids), desc="Fetching details") as pbar:
+        async with aiohttp.ClientSession() as session:
+            tasks = [_fetch_details_async(session, tmdb_id, pbar) for tmdb_id in all_ids]
+            for future in asyncio.as_completed(tasks):
+                row = await future
+                if row:
+                    rows.append(row)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — Collections → sequel_number (async)
+# ---------------------------------------------------------------------------
+
+async def _fetch_collection_async(session, cid, pbar):
+    data = await fetch_async(session, f"{BASE}/collection/{cid}", SOURCE, params=_p())
+    pbar.update(1)
+    return cid, data
+
+
+async def compute_sequel_numbers_async(rows):
     coll_ids = {r["collection_id"] for r in rows if r.get("collection_id")}
-    sequel_map = {}  # tmdb_id → sequel_number
+    sequel_map = {}
 
-    for cid in tqdm(coll_ids, desc="Collections"):
-        data = fetch_collection(cid)
-        if not data:
-            continue
-        parts = sorted(
-            [p for p in data.get("parts", []) if p.get("release_date")],
-            key=lambda p: p["release_date"],
-        )
-        for i, part in enumerate(parts, start=1):
-            sequel_map[part["id"]] = i
+    with tqdm(total=len(coll_ids), desc="Collections") as pbar:
+        async with aiohttp.ClientSession() as session:
+            tasks = [_fetch_collection_async(session, cid, pbar) for cid in coll_ids]
+            for future in asyncio.as_completed(tasks):
+                cid, data = await future
+                if not data:
+                    continue
+                parts = sorted(
+                    [p for p in data.get("parts", []) if p.get("release_date")],
+                    key=lambda p: p["release_date"],
+                )
+                for i, part in enumerate(parts, start=1):
+                    sequel_map[part["id"]] = i
 
     for r in rows:
         r["sequel_number"] = sequel_map.get(r["tmdb_id"], 0)
@@ -237,11 +252,10 @@ def _compute_sequel_numbers(rows):
 
 
 # ---------------------------------------------------------------------------
-# Reusable search helpers (used by issues #3, #4, #5)
+# Reusable search helpers (sync, used by #3, #4, #5)
 # ---------------------------------------------------------------------------
 
 def find_by_imdb(imdb_id):
-    """Return first TMDB movie result for a given IMDb ID, or None."""
     resp = fetch(
         f"{BASE}/find/{imdb_id}",
         SOURCE,
@@ -254,7 +268,6 @@ def find_by_imdb(imdb_id):
 
 
 def search_title_year(title, year):
-    """Return first TMDB search result for title + year, or None."""
     resp = fetch(
         f"{BASE}/search/movie",
         SOURCE,
@@ -270,31 +283,28 @@ def search_title_year(title, year):
 # Main
 # ---------------------------------------------------------------------------
 
+async def _build_async(all_ids):
+    rows = await fetch_all_details_async(all_ids)
+    logger.info("Parsed %d / %d", len(rows), len(all_ids))
+    rows = await compute_sequel_numbers_async(rows)
+    return rows
+
+
 def build_dataset():
     if not TMDB_KEY:
         raise RuntimeError("TMDB_API_KEY not set in .env")
 
-    # Phase 1
+    # Phase 1 — sync discover (resumable)
     all_ids = get_all_candidates()
 
-    # Phase 2
-    rows = []
-    for tmdb_id in tqdm(all_ids, desc="Fetching details"):
-        data = fetch_movie_details(tmdb_id)
-        row = _parse_movie(data)
-        if row:
-            rows.append(row)
-    logger.info("Parsed %d / %d", len(rows), len(all_ids))
+    # Phases 2+3 — async
+    rows = asyncio.run(_build_async(all_ids))
 
-    # Phase 3
-    rows = _compute_sequel_numbers(rows)
-
-    # Phase 4 — save
+    # Phase 4 — save parquet
     df = pd.DataFrame(rows)
     df.to_parquet(OUTPUT_FILE, index=False)
     logger.info("Saved → %s", OUTPUT_FILE)
 
-    # Stats (for issue comment)
     df["decade"] = (
         pd.to_datetime(df["release_date"], errors="coerce").dt.year // 10 * 10
     ).astype("Int64")
