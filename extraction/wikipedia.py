@@ -1,6 +1,8 @@
 """
-Wikipedia extraction: `| budget =` and `| gross =` parsed from the infobox of English
-Wikipedia film articles, for films that have no USD budget yet from another source.
+Wikipedia extraction: `| budget =`, `| gross =`, `| distributor =` and `| based_on =`
+parsed from the infobox of every English Wikipedia film article (from wikidata.parquet).
+has_budget_elsewhere marks films that already have a USD budget from another source;
+the others are the "new budgets" Wikipedia adds.
 
 Run:
   python extraction/wikipedia.py          # full run -> data/interim/wikipedia.parquet (+ .csv)
@@ -149,8 +151,8 @@ def fetch_section0(titles: list[str]) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def candidates() -> pd.DataFrame:
-    """Films with an enwiki article and no USD budget from another source."""
+def films_with_articles() -> pd.DataFrame:
+    """All films with an enwiki article; has_budget_elsewhere = USD budget from another source."""
     wd = pd.read_parquet(INTERIM / "wikidata.parquet")
     films = wd[wd["enwiki_title"].notna()][["imdb_id", "wikidata_id", "enwiki_title"]]
     has_budget = set()
@@ -163,25 +165,73 @@ def candidates() -> pd.DataFrame:
             has_budget |= ids
         else:
             log.info("%s missing, skipped", file)
-    return films[~films["imdb_id"].isin(has_budget)].reset_index(drop=True)
+    return films.assign(has_budget_elsewhere=films["imdb_id"].isin(has_budget)).reset_index(drop=True)
+
+
+LIST_TEMPLATES = re.compile(r"\{\{\s*(?:plain\s*list|ubl|unbulleted\s*list|flatlist|hlist)\s*\|", re.I)
+US_MARKERS = re.compile(r"\b(?:United States|U\.S\.|US|USA|North America|worldwide|international)\b", re.I)
+
+
+def parse_names(raw: str | None) -> list[str]:
+    """`[[Warner Bros. Pictures]]`, `{{Plainlist| * A (US) * B (International)}}` -> names in order.
+    The first name is the one marked as US / worldwide distributor if any, else the first listed."""
+    if not raw:
+        return []
+    s = re.sub(r"<!--.*?-->", "", raw, flags=re.S)
+    s = re.sub(r"<ref[^>]*/>", "", s)
+    s = re.sub(r"<ref[^>]*>.*?</ref>", "", s, flags=re.S)
+    s = re.sub(r"\{\{\s*(?:efn|sfn|refn|citation needed|cn)[^{}]*(?:\{\{[^{}]*\}\}[^{}]*)*\}\}", "", s, flags=re.I)
+    s = re.sub(r"\{\{\s*(?:ill|interlanguage link)\s*\|\s*([^|}]+)[^}]*\}\}", r"\1", s, flags=re.I)  # {{ill|Name|de}}
+    s = LIST_TEMPLATES.sub("|", s).replace("}}", "").replace("{{", "")
+    s = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]", r"\1", s)
+    items = re.split(r"<br\s*/?>|\*|\||\n|;", s)
+    names, us_first = [], None
+    for item in items:
+        item = re.sub(r"<[^>]+>|''+", "", item).strip(" ,")
+        name = re.sub(r"\s*\(.*?\)\s*", " ", item).strip(" ,")
+        if not name or len(name) > 80:
+            continue
+        if us_first is None and US_MARKERS.search(item) and item != name:
+            us_first = name
+        if name not in names:
+            names.append(name)
+    if us_first:
+        names.remove(us_first)
+        names.insert(0, us_first)
+    return names
 
 
 def build(films: pd.DataFrame) -> pd.DataFrame:
-    texts = fetch_section0(films["enwiki_title"].tolist())
+    # Two separate lists keep the cached batches of the first run (candidates only) valid
+    texts = {}
+    if "has_budget_elsewhere" in films:
+        texts |= fetch_section0(films.loc[~films["has_budget_elsewhere"], "enwiki_title"].tolist())
+        texts |= fetch_section0(films.loc[films["has_budget_elsewhere"], "enwiki_title"].tolist())
+    else:
+        texts = fetch_section0(films["enwiki_title"].tolist())
     rows = []
     for f in films.itertuples():
         text = texts.get(f.enwiki_title, "")
         # A field holding only an editor comment counts as empty
-        budget_raw, gross_raw = (v if v and clean(v) else None
-                                 for v in (infobox_field(text, "budget"), infobox_field(text, "gross")))
+        budget_raw, gross_raw, distributor_raw, based_on_raw = (
+            v if v and re.sub(r"<!--.*?-->", "", v, flags=re.S).strip() else None
+            for v in (infobox_field(text, "budget"), infobox_field(text, "gross"),
+                      infobox_field(text, "distributor"), infobox_field(text, r"based[ _]on")))
         budget, budget_range, budget_other = parse_money(budget_raw)
         gross, gross_range, gross_other = parse_money(gross_raw)
+        distributors = parse_names(distributor_raw)
         rows.append({
             "imdb_id": f.imdb_id, "wikidata_id": f.wikidata_id, "enwiki_title": f.enwiki_title,
+            "has_budget_elsewhere": getattr(f, "has_budget_elsewhere", False),
             "budget_wp": budget, "gross_wp": gross,
             "budget_wp_raw": budget_raw, "budget_wp_range": budget_range,
             "gross_wp_raw": gross_raw, "gross_wp_range": gross_range,
             "budget_wp_other_currency": budget_other, "gross_wp_other_currency": gross_other,
+            "distributor_wp": distributors[0] if distributors else None,
+            "distributors_wp": "|".join(distributors) or None,
+            # {{Based on|work|author}} would be dropped by clean() like any template: unwrap it first
+            "based_on_wp": clean(re.sub(r"\{\{\s*based on\s*\|", "", based_on_raw, flags=re.I)) or None
+                           if based_on_raw else None,
             "article_found": f.enwiki_title in texts,
         })
     df = pd.DataFrame(rows)
@@ -194,15 +244,19 @@ def build(films: pd.DataFrame) -> pd.DataFrame:
 
 
 def report(df: pd.DataFrame) -> str:
+    new = df[~df["has_budget_elsewhere"]]
     return "\n".join([
-        f"Candidați (articol en.wikipedia, fără buget USD din altă sursă): {len(df)}",
-        f"Articole găsite: {df['article_found'].sum()}",
-        f"Cu câmp budget în infobox: {df['budget_wp_raw'].notna().sum()}",
-        f"Bugete noi în USD adăugate de Wikipedia: {df['budget_wp'].notna().sum()} "
-        f"(din care intervale: {(df['budget_wp'].notna() & df['budget_wp_range']).sum()})",
-        f"Buget doar în altă monedă: {df['budget_wp_other_currency'].sum()}",
-        f"Încasări în USD: {df['gross_wp'].notna().sum()}",
-        f"Cu buget și încasări în USD: {(df['budget_wp'].notna() & df['gross_wp'].notna()).sum()}",
+        f"Filme cu articol en.wikipedia: {len(df)} (găsite: {df['article_found'].sum()})",
+        f"Bugete în USD: {df['budget_wp'].notna().sum()}; încasări în USD: {df['gross_wp'].notna().sum()}; "
+        f"ambele: {(df['budget_wp'].notna() & df['gross_wp'].notna()).sum()}",
+        f"Candidați (fără buget USD din altă sursă): {len(new)}",
+        f"  cu câmp budget în infobox: {new['budget_wp_raw'].notna().sum()}",
+        f"  bugete noi în USD adăugate de Wikipedia: {new['budget_wp'].notna().sum()} "
+        f"(din care intervale: {(new['budget_wp'].notna() & new['budget_wp_range']).sum()})",
+        f"  buget doar în altă monedă: {new['budget_wp_other_currency'].sum()}",
+        f"Cu distribuitor în infobox: {df['distributor_wp'].notna().sum()} "
+        f"(top: {', '.join(f'{k}={v}' for k, v in df['distributor_wp'].value_counts().head(5).items())})",
+        f"Cu câmp based_on în infobox: {df['based_on_wp'].notna().sum()}",
         f"Valori neplauzibile șterse: {df['budget_wp_implausible'].sum()} bugete, {df['gross_wp_implausible'].sum()} încasări",
     ])
 
@@ -217,8 +271,9 @@ if __name__ == "__main__":
         df = build(films)
         with pd.option_context("display.width", 250, "display.max_columns", None, "display.max_colwidth", 45):
             print(df[["enwiki_title", "budget_wp", "budget_wp_range", "gross_wp", "budget_wp_other_currency", "budget_wp_raw"]])
+            print(df[["enwiki_title", "distributor_wp", "distributors_wp", "based_on_wp"]])
     else:
-        df = build(candidates())
+        df = build(films_with_articles())
         df.to_parquet(OUT_PATH, index=False)
         df.to_csv(OUT_PATH.with_suffix(".csv"), index=False, encoding="utf-8")
         print(f"Scris: {OUT_PATH} (+ .csv)\n")
