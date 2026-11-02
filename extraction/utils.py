@@ -34,6 +34,7 @@ RATE_LIMITS: dict[str, float] = {
     "bom": 1.0,            # 1 req/s (Box Office Mojo)
     "wikipedia": 1 / 5,   # 5 req/s
     "wikidata": 1 / 5,
+    "dbpedia": 1.0,        # public SPARQL endpoint, be gentle
 }
 DEFAULT_RATE = 1.0
 
@@ -47,6 +48,14 @@ _rate_meta_lock = threading.Lock()
 _loggers: dict[str, logging.Logger] = {}
 
 USER_AGENT = "iapd-student-project (contact: barabas.catalin@gmail.com)"
+
+# Release-year window shared by all sources (same as the TMDB extraction, #2)
+YEAR_MIN, YEAR_MAX = 1950, 2024
+
+# Plausible USD ranges. Outside them the value is almost always a misparse:
+# another currency tagged as USD (rupiah, yen) or "$0.65 million" read as 0.65.
+BUDGET_RANGE = (10_000, 500_000_000)
+GROSS_RANGE = (1_000, 3_000_000_000)   # Avatar, the record, is $2.92B
 
 
 def _get_logger(source: str) -> logging.Logger:
@@ -94,6 +103,7 @@ def fetch(
     source: str,
     params: Optional[dict] = None,
     as_json: bool = True,
+    timeout: float = 30,
 ) -> Optional[Union[dict, str]]:
     """
     Fetch a URL with caching, rate limiting, and retry.
@@ -116,7 +126,7 @@ def fetch(
     for attempt in range(1, max_retries + 1):
         _rate_wait(source)
         try:
-            resp = requests.get(url, params=params, headers=headers, timeout=30)
+            resp = requests.get(url, params=params, headers=headers, timeout=timeout)
         except requests.RequestException as exc:
             logger.warning("Request error (attempt %d/%d): %s — %s", attempt, max_retries, url, exc)
             if attempt == max_retries:
@@ -139,13 +149,32 @@ def fetch(
             logger.warning("HTTP %d %s", resp.status_code, url)
             return None
 
+        # Parse before caching: a truncated JSON body (e.g. a SPARQL timeout sent
+        # with status 200) must not end up in the cache.
+        if as_json:
+            try:
+                data = resp.json()
+            except ValueError:
+                logger.warning("Invalid JSON (attempt %d/%d): %s", attempt, max_retries, url)
+                if attempt == max_retries:
+                    return None
+                time.sleep(backoff ** attempt)
+                continue
+
         # Success — write to cache
         cache_file.write_text(resp.text, encoding="utf-8")
         logger.info("FETCHED %s → %s", url, cache_file.name)
 
-        return resp.json() if as_json else resp.text
+        return data if as_json else resp.text
 
     return None
+
+
+def sparql(endpoint: str, source: str, query: str, timeout: float = 90) -> Optional[list[dict]]:
+    """Run a SPARQL SELECT through fetch(). Returns the result bindings, or None on failure."""
+    fmt = "application/sparql-results+json" if source == "dbpedia" else "json"
+    data = fetch(endpoint, source=source, params={"query": query, "format": fmt}, timeout=timeout)
+    return None if data is None else data["results"]["bindings"]
 
 
 # ---------------------------------------------------------------------------
