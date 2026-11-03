@@ -31,7 +31,7 @@ Răspunsurile HTTP brute (cache-ul din `data/raw/<sursa>/`, câte un JSON per ce
 | Sursă | Arhivă | Descărcat | Tabel rezultat |
 |---|---|---|---|
 | DBpedia (+ Wikipedia/Wikidata pentru `imdb_id`) | [data/raw/raw_dbpedia_2026-11-01.zip](data/raw/raw_dbpedia_2026-11-01.zip) | 2026-11-01 | `data/interim/dbpedia.parquet` |
-| Wikidata | [data/raw/raw_wikidata_2026-11-02.zip](data/raw/raw_wikidata_2026-11-02.zip) | 2026-11-02 | `data/interim/wikidata.parquet` |
+| Wikidata (+ premii) | [data/raw/raw_wikidata_2026-11-03.zip](data/raw/raw_wikidata_2026-11-03.zip) | 2026-11-03 | `data/interim/wikidata.parquet`, `data/interim/awards.parquet` |
 | Wikipedia (86 MB) | [Release: raw_wikipedia_2026-11-02.zip](https://github.com/cata-g/iapd-movie-box-office-profit/releases/download/raw-data-wikipedia-2026-11-02/raw_wikipedia_2026-11-02.zip) | 2026-11-02 | `data/interim/wikipedia.parquet` |
 
 ## Extracție DBpedia (#3)
@@ -55,6 +55,15 @@ python extraction/wikipedia.py           # după wikidata.py (și dbpedia.py, tm
 
 - `wikidata.parquet`: cost (P2130) și box office mondial (P2142) doar în USD, `is_adaptation` (P144) și `adaptation_type` (book, comics, tv, video_game, stage, film, true_story, franchise, other), titlul articolului en.wikipedia, `tmdb_id`.
 - `wikipedia.parquet`: `| budget =`, `| gross =`, `| distributor =` și `| based_on =` din infobox, pentru toate filmele cu articol. `has_budget_elsewhere = False` marchează bugetele noi (fără buget USD din altă sursă). Intervalele (`$10–15 million`) dau mijlocul, cu `budget_wp_range = True`. `distributor_wp` e distribuitorul principal (cel marcat SUA/internațional, altfel primul din listă).
+
+## Premii ale regizorului și actorilor (#35)
+
+```bash
+python extraction/awards.py --test   # 5 filme cunoscute, doar afișare
+python extraction/awards.py          # toate filmele din manifest (~5 min fără cache)
+```
+
+`awards.parquet`, un rând pentru fiecare film din manifest: nominalizări și premii Oscar, Globul de Aur și BAFTA ale regizorului (`director_*`) și ale primilor 3 actori (`cast_*`), numărate **doar înainte de lansare**. Persoanele din TMDB sunt găsite în Wikidata prin P4985 (TMDb person ID). O dată cunoscută doar la nivel de an e tratată ca 31 decembrie (anti-leakage). `*_found_wd` / `*_n` = câte persoane au fost găsite în Wikidata din câte are filmul.
 
 ## Test utilitare
 
