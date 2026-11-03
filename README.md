@@ -97,13 +97,16 @@ Citește doar `data/interim/` (fără cereri HTTP, câteva secunde) și scrie `d
 | `genres`, `genre_*` | genurile TMDB (separate prin `\|`) și one-hot |
 | `runtime_min` | durata în minute (gol = necunoscută) |
 | `certification` | G=0, PG=1, PG-13=2, R=3, NC-17=4 (gol = lipsă / NR) |
-| `kw_*` | one-hot pentru cele mai frecvente 30 de keywords TMDB din dataset |
+| `kw_*` | one-hot pentru cele mai frecvente 30 de keywords TMDB din dataset, fără etichetele de ton (`amused`, `suspenseful`, … = reacția publicului, leakage) |
 | `is_english`, `original_language` | limba originală: `en`, top 5 alte limbi sau `other` |
 | `country_{us,europe,asia,other}` | grupul țărilor de producție (un film poate avea mai multe) |
 | `is_franchise`, `sequel_number` | face parte dintr-o colecție TMDB; al câtelea film din colecție (0 = nu e în colecție) |
 | `is_adaptation`, `adaptation_type` | ecranizare (Wikidata P144, keywords „based on …” sau `based on` din infobox); tipul sursei din Wikidata, `other` dacă e ecranizare fără tip cunoscut, `none` altfel |
-| `director_prev_films`, `director_prev_mean_roi` | filme anterioare din dataset ale regizorului și ROI-ul lor mediu (gol = fără istoric) |
-| `cast_prev_films`, `cast_prev_mean_roi` | același calcul pentru primii 3 actori (maxim de filme, media ROI-urilor medii) |
+| `director_prev_films` | nr. de filme anterioare din dataset ale regizorului |
+| `director_prev_mean_roi` | ROI-ul mediu al acelor filme (gol = fără istoric); sensibil la un singur hit extrem |
+| `director_prev_mean_log_roi` | media lui ln(ROI) a acelor filme; variantă robustă (0 = buget recuperat exact) |
+| `director_prev_profitable_rate` | fracția acelor filme cu ROI ≥ prag; variantă robustă |
+| `cast_prev_*` | aceleași patru coloane pentru primii 3 actori (maxim de filme; celelalte calculate per actor și mediate) |
 
 **Surse (nu intră în model):** `budget_source` / `gross_source` (sursa valorii finale), `*_n_sources` (câte surse au valoare), `*_n_agree` (câte surse sunt la ±25% de valoarea finală), `*_conflict` (max/min > 1,25), valorile brute `budget_tmdb`, `budget_dbp`, `budget_wd`, `budget_wp`, `gross_wp`, `worldwide_gross_dbp`, `gross_wd`, `revenue_tmdb`.
 

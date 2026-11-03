@@ -61,6 +61,21 @@ ASIA = set("AE AF BD BN BT CN HK ID IL IN IQ IR JO JP KG KH KP KR KW KZ LA LB LK
            "MV MY NP OM PH PK PS QA SA SG SY TH TJ TL TM TR TW UZ VN YE".split())
 
 TOP_KEYWORDS = 30
+
+# Etichete de ton TMDB: descriu reacția publicului după vizionare → leakage, nu intră în top keywords
+TONE_KEYWORDS = set("""
+absurd admiring adoring aggressive ambiguous ambivalent amused angry antagonistic anxious
+apathetic appreciative approving arrogant assertive audacious awestruck baffled bewildered
+bitter bold callous candid cautionary celebratory cheerful comforting compassionate complex
+condescending critical cruel curious defiant depressing desperate disdainful disgusted dramatic
+earnest embarrassed empathetic enchanted energetic enthusiastic excited exhilarated exuberant
+familiar farcical frightened frustrated grim harsh hilarious hopeful horrified humorous
+informative inquisitive inspirational intense introspective joyful joyous lighthearted loving
+melancholy melodramatic mischievous mocking nostalgic optimistic outrageous passionate
+pessimistic playful powerful provocative reflective regretful relaxed respectful romantic sad
+sarcastic satirical sentimental serious shocking sincere skeptical somber suspenseful
+sympathetic tense thoughtful tragic vibrant whimsical witty zealous
+""".split()) | {"mean spirited"}
 TOP_LANGUAGES = 5
 
 
@@ -204,28 +219,35 @@ def _country_group(code: str) -> str:
     return "other"
 
 
-def prev_history(df: pd.DataFrame, col: str) -> tuple[pd.Series, pd.Series]:
+def prev_history(df: pd.DataFrame, col: str, prefix: str, threshold: float) -> pd.DataFrame:
     """Pentru fiecare film și fiecare persoană din `col`: filmele din dataset ale
-    persoanei lansate strict înainte. Întoarce (nr. maxim de filme anterioare,
-    media ROI per persoană, mediată peste persoanele cu istoric)."""
+    persoanei lansate strict înainte. Statisticile se calculează per persoană și
+    apoi se mediază peste persoanele cu istoric:
+      {prefix}_prev_films            nr. maxim de filme anterioare
+      {prefix}_prev_mean_roi         media ROI (cerută în issue; sensibilă la hituri extreme)
+      {prefix}_prev_mean_log_roi     media lui ln(ROI) — robustă la valori extreme
+      {prefix}_prev_profitable_rate  ce fracție din filmele anterioare a fost profitabilă"""
     films_by_person = defaultdict(list)
-    for imdb_id, people, date, roi in zip(df.index, df[col], df["release_date"], df["roi"]):
+    for people, date, roi in zip(df[col], df["release_date"], df["roi"]):
         for p in _as_list(people):
             films_by_person[p].append((date, roi))
-    for p in films_by_person:
-        films_by_person[p].sort(key=lambda x: x[0])
 
-    n_prev, mean_roi = [], []
+    rows = []
     for people, date in zip(df[col], df["release_date"]):
-        counts, means = [], []
+        counts, means, logs, rates = [], [], [], []
         for p in _as_list(people):
-            prior = [r for d, r in films_by_person[p] if d < date]
+            prior = np.array([r for d, r in films_by_person[p] if d < date])
             counts.append(len(prior))
-            if prior:
-                means.append(float(np.mean(prior)))
-        n_prev.append(max(counts) if counts else 0)
-        mean_roi.append(float(np.mean(means)) if means else np.nan)
-    return pd.Series(n_prev, index=df.index), pd.Series(mean_roi, index=df.index)
+            if len(prior):
+                means.append(prior.mean())
+                logs.append(np.log(prior).mean())
+                rates.append((prior >= threshold).mean())
+        avg = lambda xs: round(float(np.mean(xs)), 4) if xs else np.nan
+        rows.append({f"{prefix}_prev_films": max(counts) if counts else 0,
+                     f"{prefix}_prev_mean_roi": avg(means),
+                     f"{prefix}_prev_mean_log_roi": avg(logs),
+                     f"{prefix}_prev_profitable_rate": avg(rates)})
+    return pd.DataFrame(rows, index=df.index)
 
 
 def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
@@ -269,9 +291,9 @@ def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
     cert = df["certification_us"].astype("string").str.strip().str.upper()
     out["certification"] = cert.map(CERTIFICATION).astype("Int64")
 
-    # 10. Cele mai frecvente keywords (one-hot)
+    # 10. Cele mai frecvente keywords (one-hot), fără etichetele de ton (reacția publicului)
     kws = df["keywords"].apply(lambda k: [w.strip().lower() for w in _as_list(k)])
-    top = pd.Series([w for ws in kws for w in set(ws)]).value_counts()
+    top = pd.Series([w for ws in kws for w in set(ws) if w not in TONE_KEYWORDS]).value_counts()
     top = sorted(top.head(TOP_KEYWORDS).items(), key=lambda kv: (-kv[1], kv[0]))
     for w, _ in top:
         out[f"kw_{_slug(w)}"] = kws.apply(lambda ws, w=w: int(w in ws))
@@ -303,10 +325,8 @@ def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
                                          np.where(out["is_adaptation"] == 1, "other", "none"))
 
     # 16–18. Istoricul regizorului și al actorilor (doar filme lansate înainte)
-    out["director_prev_films"], out["director_prev_mean_roi"] = prev_history(df, "director_ids")
-    out["cast_prev_films"], out["cast_prev_mean_roi"] = prev_history(df, "cast_top3_ids")
-    out["director_prev_mean_roi"] = out["director_prev_mean_roi"].round(4)
-    out["cast_prev_mean_roi"] = out["cast_prev_mean_roi"].round(4)
+    out = out.join(prev_history(df, "director_ids", "director", threshold))
+    out = out.join(prev_history(df, "cast_top3_ids", "cast", threshold))
 
     # Sursele și valorile brute (nu intră în model)
     for col in ["budget_source", "budget_n_sources", "budget_n_agree", "budget_conflict",
@@ -345,11 +365,6 @@ def write_report(out: pd.DataFrame, funnel: list, threshold: float) -> None:
         vc = out[col].value_counts().sort_index()
         return _md_table([{"valoare": k, "filme": int(v), "%": f"{100 * v / n:.1f}"} for k, v in vc.items()])
 
-    feature_cols = ["budget", "director_award_noms_before", "major_studio", "release_year",
-                    "release_month", "release_weekday", "genres", "runtime_min", "certification",
-                    "kw_*", "original_language", "country_*", "is_franchise", "sequel_number",
-                    "is_adaptation", "director_prev_films", "director_prev_mean_roi",
-                    "cast_prev_mean_roi"]
     missing = []
     for c in ["runtime_min", "certification", "sequel_number",
               "director_prev_mean_roi", "cast_prev_mean_roi"]:
@@ -413,12 +428,28 @@ modelul se poate evalua separat doar pe filmele cu `gross_n_sources >= 2`
 
 {_md_table(missing)}
 
-`director_prev_mean_roi` și `cast_prev_mean_roi` lipsesc când persoana nu are niciun film
-anterior în dataset (debut sau filme fără buget/încasări cunoscute).
+Coloanele `*_prev_*` lipsesc când persoana nu are niciun film anterior în dataset (debut sau
+filme fără buget/încasări cunoscute). `*_prev_mean_log_roi` și `*_prev_profitable_rate` lipsesc
+în aceleași cazuri.
+
+## Istoricul ROI: media simplă vs. variantele robuste
+
+ROI-ul are o coadă foarte lungă (median {out["roi"].median():.2f}, percentila 99
+{out["roi"].quantile(0.99):.1f}, maxim {out["roi"].max():,.0f}), deci un singur hit extrem domină
+media simplă. Pe lângă `*_prev_mean_roi` (cerută în issue) sunt calculate:
+
+- `*_prev_mean_log_roi`: media lui ln(ROI) a filmelor anterioare (0 = și-a recuperat exact bugetul);
+- `*_prev_profitable_rate`: fracția filmelor anterioare cu ROI ≥ {threshold}.
+
+| | max `director_prev_mean_roi` | max `director_prev_mean_log_roi` | max `director_prev_profitable_rate` |
+|---|---|---|---|
+| valoare | {out["director_prev_mean_roi"].max():,.1f} | {out["director_prev_mean_log_roi"].max():.2f} | {out["director_prev_profitable_rate"].max():.2f} |
 
 ## Anti-leakage
 
 - Premiile și istoricul regizorului/actorilor folosesc doar filme lansate **strict înainte**.
+- Etichetele de ton TMDB (`amused`, `suspenseful`, `absurd`, … — {len(TONE_KEYWORDS)} de cuvinte) descriu
+  reacția publicului după vizionare și sunt excluse din top keywords.
 - `vote_average` și `vote_count` sunt păstrate doar pentru experimentul leakage vs. no-leakage.
 - Istoricul ROI e calculat pe tot datasetul: la o împărțire train/test aleatoare, un film din
   train poate folosi ROI-ul unui film anterior din test. Împărțirea temporală (după an) evită asta.

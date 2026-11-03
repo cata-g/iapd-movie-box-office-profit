@@ -2,7 +2,7 @@
 
 Generat de `python extraction/integrate.py --threshold 2.5`.
 
-**Rezultat:** 15,972 filme în `data/processed/movies_dataset.csv`, 99 coloane.
+**Rezultat:** 15,972 filme în `data/processed/movies_dataset.csv`, 103 coloane.
 
 ## Pâlnia de curățare
 
@@ -84,12 +84,28 @@ modelul se poate evalua separat doar pe filmele cu `gross_n_sources >= 2`
 | `director_prev_mean_roi` | 6,693 | 41.9 |
 | `cast_prev_mean_roi` | 2,510 | 15.7 |
 
-`director_prev_mean_roi` și `cast_prev_mean_roi` lipsesc când persoana nu are niciun film
-anterior în dataset (debut sau filme fără buget/încasări cunoscute).
+Coloanele `*_prev_*` lipsesc când persoana nu are niciun film anterior în dataset (debut sau
+filme fără buget/încasări cunoscute). `*_prev_mean_log_roi` și `*_prev_profitable_rate` lipsesc
+în aceleași cazuri.
+
+## Istoricul ROI: media simplă vs. variantele robuste
+
+ROI-ul are o coadă foarte lungă (median 1.31, percentila 99
+47.9, maxim 12,947), deci un singur hit extrem domină
+media simplă. Pe lângă `*_prev_mean_roi` (cerută în issue) sunt calculate:
+
+- `*_prev_mean_log_roi`: media lui ln(ROI) a filmelor anterioare (0 = și-a recuperat exact bugetul);
+- `*_prev_profitable_rate`: fracția filmelor anterioare cu ROI ≥ 2.5.
+
+| | max `director_prev_mean_roi` | max `director_prev_mean_log_roi` | max `director_prev_profitable_rate` |
+|---|---|---|---|
+| valoare | 12,946.7 | 9.47 | 1.00 |
 
 ## Anti-leakage
 
 - Premiile și istoricul regizorului/actorilor folosesc doar filme lansate **strict înainte**.
+- Etichetele de ton TMDB (`amused`, `suspenseful`, `absurd`, … — 103 de cuvinte) descriu
+  reacția publicului după vizionare și sunt excluse din top keywords.
 - `vote_average` și `vote_count` sunt păstrate doar pentru experimentul leakage vs. no-leakage.
 - Istoricul ROI e calculat pe tot datasetul: la o împărțire train/test aleatoare, un film din
   train poate folosi ROI-ul unui film anterior din test. Împărțirea temporală (după an) evită asta.
