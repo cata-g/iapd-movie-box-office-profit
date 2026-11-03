@@ -149,11 +149,11 @@ def clean(df: pd.DataFrame, funnel: list) -> pd.DataFrame:
         nonlocal df
         removed = int((~mask).sum())
         df = df[mask]
-        funnel.append({"pas": name, "regula": rule, "eliminate": removed, "raman": len(df)})
+        funnel.append({"Pas": name, "Ce s-a scos": rule, "Scoase": removed, "Rămân": len(df)})
         return df
 
-    funnel.append({"pas": "manifest", "regula": "filme cu buget > 0 în cel puțin o sursă, cu imdb_id",
-                   "eliminate": 0, "raman": len(df)})
+    funnel.append({"Pas": "start", "Ce s-a scos": "toate filmele din manifest",
+                   "Scoase": 0, "Rămân": len(df)})
 
     # Valori absurde per sursă → lipsă (buget < 10.000 USD = eroare)
     n_budget_err = {}
@@ -172,28 +172,27 @@ def clean(df: pd.DataFrame, funnel: list) -> pd.DataFrame:
                             "worldwide_gross_n_agree": "gross_n_agree"})
 
     step("buget", df["budget"].notna(),
-         f"fără buget plauzibil ({BUDGET_RANGE[0]:,}–{BUDGET_RANGE[1]:,} USD) în nicio sursă; "
-         f"valori per sursă invalidate: " + ", ".join(f"`{k}` {v:,}" for k, v in n_budget_err.items()))
+         "niciun buget între 10.000 $ și 500 mil. $ (bugete prea mici ignorate: "
+         + ", ".join(f"{k.split('_')[1]} {_n(v)}" for k, v in n_budget_err.items() if v) + ")")
     step("încasări", df["worldwide_gross"].notna(),
-         f"fără încasări mondiale plauzibile ({GROSS_RANGE[0]:,}–{GROSS_RANGE[1]:,} USD) în nicio sursă")
+         "nicio sursă nu are încasări mondiale")
 
     df["release_date"] = pd.to_datetime(df["release_date"], errors="coerce")
     step("dată lansare", df["release_date"].notna(),
-         "fără dată completă de lansare în TMDB (necesară pentru lună, zi și istoricul anterior)")
+         "fără dată de lansare în TMDB")
     year = df["release_date"].dt.year
-    step("interval ani", year.between(YEAR_MIN, YEAR_MAX), f"lansat în afara {YEAR_MIN}–{YEAR_MAX}")
+    step("interval ani", year.between(YEAR_MIN, YEAR_MAX), f"lansate înainte de {YEAR_MIN} sau după {YEAR_MAX}")
 
     is_tv = df["genres"].apply(lambda g: g is not None and "TV Movie" in list(g))
-    step("film TV", ~is_tv, "gen TMDB „TV Movie” (fără lansare în cinema)")
+    step("film TV", ~is_tv, "filme TV (n-au rulat în cinema)")
     runtime = pd.to_numeric(df["runtime"], errors="coerce")
-    step("scurtmetraj", ~runtime.between(1, MIN_RUNTIME - 1), f"durată între 1 și {MIN_RUNTIME - 1} min")
+    step("scurtmetraj", ~runtime.between(1, MIN_RUNTIME - 1), f"scurtmetraje (sub {MIN_RUNTIME} min)")
 
     df["roi"] = df["worldwide_gross"] / df["budget"]
     extreme = ~df["roi"].between(*ROI_EXTREME)
     confirmed = (df["budget_n_agree"] >= 2) & (df["gross_n_agree"] >= 2)
     step("ROI extrem", ~extreme | confirmed,
-         f"ROI < {ROI_EXTREME[0]} sau > {ROI_EXTREME[1]} fără confirmare "
-         "(≥ 2 surse care dau, la ±25%, aceeași valoare pentru buget și pentru încasări)")
+         "ROI sub 0,001 sau peste 100 pe care nu-l confirmă 2 surse (probabil o greșeală)")
     return df
 
 
@@ -348,11 +347,20 @@ def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
 # Raport
 # ---------------------------------------------------------------------------
 
+def _n(v) -> str:
+    """Număr în format românesc: 15.972"""
+    return f"{v:,}".replace(",", ".")
+
+
+def _pct(x: float) -> str:
+    return f"{100 * x:.1f}".replace(".", ",") + "%"
+
+
 def _md_table(rows: list[dict]) -> str:
     cols = list(rows[0])
     lines = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     for r in rows:
-        lines.append("| " + " | ".join(f"{v:,}" if isinstance(v, (int, np.integer)) else str(v)
+        lines.append("| " + " | ".join(_n(v) if isinstance(v, (int, np.integer)) else str(v)
                                        for v in r.values()) + " |")
     return "\n".join(lines)
 
@@ -360,99 +368,94 @@ def _md_table(rows: list[dict]) -> str:
 def write_report(out: pd.DataFrame, funnel: list, threshold: float) -> None:
     n = len(out)
     pos = int(out["profitable"].sum())
+    t = str(threshold).replace(".", ",")
 
-    def dist(col):
+    def sources(col):
         vc = out[col].value_counts().sort_index()
-        return _md_table([{"valoare": k, "filme": int(v), "%": f"{100 * v / n:.1f}"} for k, v in vc.items()])
+        return _md_table([{"Surse": k, "Filme": int(v), "%": _pct(v / n)} for k, v in vc.items()])
 
-    missing = []
-    for c in ["runtime_min", "certification", "sequel_number",
-              "director_prev_mean_roi", "cast_prev_mean_roi"]:
-        missing.append({"coloană": f"`{c}`", "lipsă": int(out[c].isna().sum()),
-                        "%": f"{100 * out[c].isna().mean():.1f}"})
+    missing = _md_table([{"Coloană": f"`{c}`", "Lipsesc": int(out[c].isna().sum()),
+                          "%": _pct(out[c].isna().mean())}
+                         for c in ["runtime_min", "certification", "sequel_number",
+                                   "director_prev_mean_roi", "cast_prev_mean_roi"]])
+    corr = _md_table([{"Coloană": f"`{c}`", "Corelație cu `profitable`":
+                       f"{out[c].corr(out['profitable']):.3f}".replace(".", ",")}
+                      for c in ["director_prev_mean_roi", "director_prev_mean_log_roi",
+                                "director_prev_profitable_rate", "cast_prev_mean_roi",
+                                "cast_prev_mean_log_roi", "cast_prev_profitable_rate"]])
+    final_src = _md_table([{"Sursă": k, "Buget": int((out["budget_source"] == k).sum()),
+                            "Încasări": int((out["gross_source"] == k).sum())} for k in BUDGET_SOURCES])
 
     text = f"""# Raport de integrare (#27)
 
-Generat de `python extraction/integrate.py --threshold {threshold}`.
+Generat cu `python extraction/integrate.py --threshold {threshold}`.
 
-**Rezultat:** {n:,} filme în `data/processed/movies_dataset.csv`, {len(out.columns)} coloane.
+**Rezultat:** {_n(n)} filme în `data/processed/movies_dataset.csv`.
 
-## Pâlnia de curățare
+## Ce filme am scos
 
 {_md_table(funnel)}
 
-Ordinea de prioritate:
-- buget: {" → ".join(BUDGET_SOURCES)};
-- încasări mondiale: {" → ".join(GROSS_SOURCES)}.
-
-Box Office Mojo și The Numbers sunt excluse (vezi README, „Surse excluse”).
-
 ## Ținta
 
-`roi = worldwide_gross / budget`, `profitable = roi >= {threshold}`.
+Un film e **profitabil** dacă încasările sunt de cel puțin {t} ori bugetul (`roi = încasări / buget`).
 
-| Clasă | Filme | % |
+| | Filme | % |
 |---|---|---|
-| profitable = 1 | {pos:,} | {100 * pos / n:.1f} |
-| profitable = 0 | {n - pos:,} | {100 * (n - pos) / n:.1f} |
+| profitabile | {_n(pos)} | {_pct(pos / n)} |
+| neprofitabile | {_n(n - pos)} | {_pct((n - pos) / n)} |
 
-ROI median: {out["roi"].median():.2f}.
+Clasele sunt dezechilibrate: un model care spune mereu „neprofitabil” are dreptate în {_pct((n - pos) / n)} din cazuri.
 
-## Conflicte între surse
+## De unde vin bugetul și încasările
 
-Conflict = valoarea maximă depășește valoarea minimă cu peste {round((CONFLICT_RATIO - 1) * 100)}%.
+Când mai multe surse au o valoare, o luăm pe cea din sursa mai sigură:
+- buget: {" → ".join(BUDGET_SOURCES)}
+- încasări: {" → ".join(GROSS_SOURCES)}
 
-| | Filme cu conflict | % |
-|---|---|---|
-| buget | {int(out["budget_conflict"].sum()):,} | {100 * out["budget_conflict"].mean():.1f} |
-| încasări | {int(out["gross_conflict"].sum()):,} | {100 * out["gross_conflict"].mean():.1f} |
+{final_src}
 
-### Câte surse confirmă bugetul
+Box Office Mojo și The Numbers nu sunt folosite: interzic colectarea automată (vezi README).
 
-{dist("budget_n_sources")}
+### Cât de sigure sunt valorile
 
-### Câte surse confirmă încasările
+Câte surse au o valoare pentru fiecare film:
 
-{dist("gross_n_sources")}
+**Buget**
 
-DBpedia și Wikipedia citesc același infobox, deci nu sunt surse independente. Pentru robustețe,
-modelul se poate evalua separat doar pe filmele cu `gross_n_sources >= 2`
-({int((out["gross_n_sources"] >= 2).sum()):,} filme).
+{sources("budget_n_sources")}
 
-### Sursa valorii finale
+**Încasări**
 
-{_md_table([{"sursă": k, "buget": int((out["budget_source"] == k).sum()),
-             "încasări": int((out["gross_source"] == k).sum())} for k in BUDGET_SOURCES])}
+{sources("gross_n_sources")}
 
-## Valori lipsă în caracteristici
+Sursele nu se pun mereu de acord: la {_n(int(out["budget_conflict"].sum()))} filme ({_pct(out["budget_conflict"].mean())}) bugetele diferă cu peste 25%, iar la {_n(int(out["gross_conflict"].sum()))} ({_pct(out["gross_conflict"].mean())}) încasările.
 
-{_md_table(missing)}
+Atenție: DBpedia copiază datele din Wikipedia, deci „2 surse” poate fi de fapt una singură.
 
-Coloanele `*_prev_*` lipsesc când persoana nu are niciun film anterior în dataset (debut sau
-filme fără buget/încasări cunoscute). `*_prev_mean_log_roi` și `*_prev_profitable_rate` lipsesc
-în aceleași cazuri.
+## Date lipsă
 
-## Istoricul ROI: media simplă vs. variantele robuste
+{missing}
 
-ROI-ul are o coadă foarte lungă (median {out["roi"].median():.2f}, percentila 99
-{out["roi"].quantile(0.99):.1f}, maxim {out["roi"].max():,.0f}), deci un singur hit extrem domină
-media simplă. Pe lângă `*_prev_mean_roi` (cerută în issue) sunt calculate:
+Istoricul regizorului și al actorilor lipsește când e primul lor film din dataset.
 
-- `*_prev_mean_log_roi`: media lui ln(ROI) a filmelor anterioare (0 = și-a recuperat exact bugetul);
-- `*_prev_profitable_rate`: fracția filmelor anterioare cu ROI ≥ {threshold}.
+## Istoricul ROI: de ce nu ajunge media
 
-| | max `director_prev_mean_roi` | max `director_prev_mean_log_roi` | max `director_prev_profitable_rate` |
-|---|---|---|---|
-| valoare | {out["director_prev_mean_roi"].max():,.1f} | {out["director_prev_mean_log_roi"].max():.2f} | {out["director_prev_profitable_rate"].max():.2f} |
+Câteva filme au un ROI uriaș ({out.loc[out["roi"].idxmax(), "title"]}: {_n(round(out["roi"].max()))}), deși la jumătate dintre filme ROI-ul e sub {f"{out['roi'].median():.2f}".replace(".", ",")}. Un singur astfel de hit strică media pentru toată cariera unui regizor. De aceea, pe lângă media cerută în issue, am adăugat:
 
-## Anti-leakage
+- `*_prev_profitable_rate`: ce parte din filmele anterioare au fost profitabile;
+- `*_prev_mean_log_roi`: media pe logaritm, unde un hit contează mult mai puțin.
 
-- Premiile și istoricul regizorului/actorilor folosesc doar filme lansate **strict înainte**.
-- Etichetele de ton TMDB (`amused`, `suspenseful`, `absurd`, … — {len(TONE_KEYWORDS)} de cuvinte) descriu
-  reacția publicului după vizionare și sunt excluse din top keywords.
-- `vote_average` și `vote_count` sunt păstrate doar pentru experimentul leakage vs. no-leakage.
-- Istoricul ROI e calculat pe tot datasetul: la o împărțire train/test aleatoare, un film din
-  train poate folosi ROI-ul unui film anterior din test. Împărțirea temporală (după an) evită asta.
+{corr}
+
+Media simplă aproape nu are legătură cu ținta; variantele noi au.
+
+## Fără informații de după lansare (anti-leakage)
+
+- Premiile și istoricul regizorului/actorilor vin doar din filmele lansate **înainte**.
+- Am scos keywords ca `amused` sau `suspenseful`: arată cum a reacționat publicul, deci nu se știu înainte de lansare.
+- `vote_average` și `vote_count` rămân în tabel doar pentru experimentul cu leakage.
+- La antrenare, e mai sigur să împărțim filmele după an (vechi = antrenare, noi = test). La o împărțire aleatoare, istoricul unui film vechi ar putea folosi ROI-ul unui film din test.
 """
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text(text, encoding="utf-8")
@@ -479,7 +482,7 @@ def main() -> None:
     print(f"Scris {OUT_CSV.relative_to(PROJECT_ROOT)}: {len(out):,} filme, {len(out.columns)} coloane")
     print(f"Scris {REPORT.relative_to(PROJECT_ROOT)}")
     for f in funnel:
-        print(f"  {f['pas']:15s} -{f['eliminate']:>6,}  -> {f['raman']:>6,}")
+        print(f"  {f['Pas']:15s} -{f['Scoase']:>6,}  -> {f['Rămân']:>6,}")
     print(f"  profitable: {out['profitable'].mean():.1%}")
 
 

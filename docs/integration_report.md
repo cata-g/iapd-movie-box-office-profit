@@ -1,111 +1,107 @@
 # Raport de integrare (#27)
 
-Generat de `python extraction/integrate.py --threshold 2.5`.
+Generat cu `python extraction/integrate.py --threshold 2.5`.
 
-**Rezultat:** 15,972 filme în `data/processed/movies_dataset.csv`, 103 coloane.
+**Rezultat:** 15.972 filme în `data/processed/movies_dataset.csv`.
 
-## Pâlnia de curățare
+## Ce filme am scos
 
-| pas | regula | eliminate | raman |
+| Pas | Ce s-a scos | Scoase | Rămân |
 |---|---|---|---|
-| manifest | filme cu buget > 0 în cel puțin o sursă, cu imdb_id | 0 | 27,657 |
-| buget | fără buget plauzibil (10,000–500,000,000 USD) în nicio sursă; valori per sursă invalidate: `budget_tmdb` 1,056, `budget_dbp` 0, `budget_wd` 0, `budget_wp` 0 | 972 | 26,685 |
-| încasări | fără încasări mondiale plauzibile (1,000–3,000,000,000 USD) în nicio sursă | 10,378 | 16,307 |
-| dată lansare | fără dată completă de lansare în TMDB (necesară pentru lună, zi și istoricul anterior) | 156 | 16,151 |
-| interval ani | lansat în afara 1950–2024 | 63 | 16,088 |
-| film TV | gen TMDB „TV Movie” (fără lansare în cinema) | 24 | 16,064 |
-| scurtmetraj | durată între 1 și 39 min | 22 | 16,042 |
-| ROI extrem | ROI < 0.001 sau > 100 fără confirmare (≥ 2 surse care dau, la ±25%, aceeași valoare pentru buget și pentru încasări) | 70 | 15,972 |
-
-Ordinea de prioritate:
-- buget: tmdb → dbpedia → wikidata → wikipedia;
-- încasări mondiale: wikipedia → dbpedia → wikidata → tmdb.
-
-Box Office Mojo și The Numbers sunt excluse (vezi README, „Surse excluse”).
+| start | toate filmele din manifest | 0 | 27.657 |
+| buget | niciun buget între 10.000 $ și 500 mil. $ (bugete prea mici ignorate: tmdb 1.056) | 972 | 26.685 |
+| încasări | nicio sursă nu are încasări mondiale | 10.378 | 16.307 |
+| dată lansare | fără dată de lansare în TMDB | 156 | 16.151 |
+| interval ani | lansate înainte de 1950 sau după 2024 | 63 | 16.088 |
+| film TV | filme TV (n-au rulat în cinema) | 24 | 16.064 |
+| scurtmetraj | scurtmetraje (sub 40 min) | 22 | 16.042 |
+| ROI extrem | ROI sub 0,001 sau peste 100 pe care nu-l confirmă 2 surse (probabil o greșeală) | 70 | 15.972 |
 
 ## Ținta
 
-`roi = worldwide_gross / budget`, `profitable = roi >= 2.5`.
+Un film e **profitabil** dacă încasările sunt de cel puțin 2,5 ori bugetul (`roi = încasări / buget`).
 
-| Clasă | Filme | % |
+| | Filme | % |
 |---|---|---|
-| profitable = 1 | 5,140 | 32.2 |
-| profitable = 0 | 10,832 | 67.8 |
+| profitabile | 5.140 | 32,2% |
+| neprofitabile | 10.832 | 67,8% |
 
-ROI median: 1.31.
+Clasele sunt dezechilibrate: un model care spune mereu „neprofitabil” are dreptate în 67,8% din cazuri.
 
-## Conflicte între surse
+## De unde vin bugetul și încasările
 
-Conflict = valoarea maximă depășește valoarea minimă cu peste 25%.
+Când mai multe surse au o valoare, o luăm pe cea din sursa mai sigură:
+- buget: tmdb → dbpedia → wikidata → wikipedia
+- încasări: wikipedia → dbpedia → wikidata → tmdb
 
-| | Filme cu conflict | % |
+| Sursă | Buget | Încasări |
 |---|---|---|
-| buget | 1,175 | 7.4 |
-| încasări | 1,738 | 10.9 |
-
-### Câte surse confirmă bugetul
-
-| valoare | filme | % |
-|---|---|---|
-| 1 | 3,934 | 24.6 |
-| 2 | 3,516 | 22.0 |
-| 3 | 5,641 | 35.3 |
-| 4 | 2,881 | 18.0 |
-
-### Câte surse confirmă încasările
-
-| valoare | filme | % |
-|---|---|---|
-| 1 | 2,698 | 16.9 |
-| 2 | 3,480 | 21.8 |
-| 3 | 7,106 | 44.5 |
-| 4 | 2,688 | 16.8 |
-
-DBpedia și Wikipedia citesc același infobox, deci nu sunt surse independente. Pentru robustețe,
-modelul se poate evalua separat doar pe filmele cu `gross_n_sources >= 2`
-(13,274 filme).
-
-### Sursa valorii finale
-
-| sursă | buget | încasări |
-|---|---|---|
-| tmdb | 12,283 | 2,085 |
-| dbpedia | 3,252 | 472 |
+| tmdb | 12.283 | 2.085 |
+| dbpedia | 3.252 | 472 |
 | wikidata | 138 | 189 |
-| wikipedia | 299 | 13,226 |
+| wikipedia | 299 | 13.226 |
 
-## Valori lipsă în caracteristici
+Box Office Mojo și The Numbers nu sunt folosite: interzic colectarea automată (vezi README).
 
-| coloană | lipsă | % |
+### Cât de sigure sunt valorile
+
+Câte surse au o valoare pentru fiecare film:
+
+**Buget**
+
+| Surse | Filme | % |
 |---|---|---|
-| `runtime_min` | 19 | 0.1 |
-| `certification` | 5,655 | 35.4 |
-| `sequel_number` | 12 | 0.1 |
-| `director_prev_mean_roi` | 6,693 | 41.9 |
-| `cast_prev_mean_roi` | 2,510 | 15.7 |
+| 1 | 3.934 | 24,6% |
+| 2 | 3.516 | 22,0% |
+| 3 | 5.641 | 35,3% |
+| 4 | 2.881 | 18,0% |
 
-Coloanele `*_prev_*` lipsesc când persoana nu are niciun film anterior în dataset (debut sau
-filme fără buget/încasări cunoscute). `*_prev_mean_log_roi` și `*_prev_profitable_rate` lipsesc
-în aceleași cazuri.
+**Încasări**
 
-## Istoricul ROI: media simplă vs. variantele robuste
+| Surse | Filme | % |
+|---|---|---|
+| 1 | 2.698 | 16,9% |
+| 2 | 3.480 | 21,8% |
+| 3 | 7.106 | 44,5% |
+| 4 | 2.688 | 16,8% |
 
-ROI-ul are o coadă foarte lungă (median 1.31, percentila 99
-47.9, maxim 12,947), deci un singur hit extrem domină
-media simplă. Pe lângă `*_prev_mean_roi` (cerută în issue) sunt calculate:
+Sursele nu se pun mereu de acord: la 1.175 filme (7,4%) bugetele diferă cu peste 25%, iar la 1.738 (10,9%) încasările.
 
-- `*_prev_mean_log_roi`: media lui ln(ROI) a filmelor anterioare (0 = și-a recuperat exact bugetul);
-- `*_prev_profitable_rate`: fracția filmelor anterioare cu ROI ≥ 2.5.
+Atenție: DBpedia copiază datele din Wikipedia, deci „2 surse” poate fi de fapt una singură.
 
-| | max `director_prev_mean_roi` | max `director_prev_mean_log_roi` | max `director_prev_profitable_rate` |
-|---|---|---|---|
-| valoare | 12,946.7 | 9.47 | 1.00 |
+## Date lipsă
 
-## Anti-leakage
+| Coloană | Lipsesc | % |
+|---|---|---|
+| `runtime_min` | 19 | 0,1% |
+| `certification` | 5.655 | 35,4% |
+| `sequel_number` | 12 | 0,1% |
+| `director_prev_mean_roi` | 6.693 | 41,9% |
+| `cast_prev_mean_roi` | 2.510 | 15,7% |
 
-- Premiile și istoricul regizorului/actorilor folosesc doar filme lansate **strict înainte**.
-- Etichetele de ton TMDB (`amused`, `suspenseful`, `absurd`, … — 103 de cuvinte) descriu
-  reacția publicului după vizionare și sunt excluse din top keywords.
-- `vote_average` și `vote_count` sunt păstrate doar pentru experimentul leakage vs. no-leakage.
-- Istoricul ROI e calculat pe tot datasetul: la o împărțire train/test aleatoare, un film din
-  train poate folosi ROI-ul unui film anterior din test. Împărțirea temporală (după an) evită asta.
+Istoricul regizorului și al actorilor lipsește când e primul lor film din dataset.
+
+## Istoricul ROI: de ce nu ajunge media
+
+Câteva filme au un ROI uriaș (Paranormal Activity: 12.947), deși la jumătate dintre filme ROI-ul e sub 1,31. Un singur astfel de hit strică media pentru toată cariera unui regizor. De aceea, pe lângă media cerută în issue, am adăugat:
+
+- `*_prev_profitable_rate`: ce parte din filmele anterioare au fost profitabile;
+- `*_prev_mean_log_roi`: media pe logaritm, unde un hit contează mult mai puțin.
+
+| Coloană | Corelație cu `profitable` |
+|---|---|
+| `director_prev_mean_roi` | 0,003 |
+| `director_prev_mean_log_roi` | 0,194 |
+| `director_prev_profitable_rate` | 0,187 |
+| `cast_prev_mean_roi` | 0,034 |
+| `cast_prev_mean_log_roi` | 0,173 |
+| `cast_prev_profitable_rate` | 0,164 |
+
+Media simplă aproape nu are legătură cu ținta; variantele noi au.
+
+## Fără informații de după lansare (anti-leakage)
+
+- Premiile și istoricul regizorului/actorilor vin doar din filmele lansate **înainte**.
+- Am scos keywords ca `amused` sau `suspenseful`: arată cum a reacționat publicul, deci nu se știu înainte de lansare.
+- `vote_average` și `vote_count` rămân în tabel doar pentru experimentul cu leakage.
+- La antrenare, e mai sigur să împărțim filmele după an (vechi = antrenare, noi = test). La o împărțire aleatoare, istoricul unui film vechi ar putea folosi ROI-ul unui film din test.
