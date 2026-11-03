@@ -4,7 +4,7 @@ Proiect de master la Politehnica București (IAPD – Învățare automată și 
 
 **Scop:** predicția profitabilității filmelor lansate în cinema folosind exclusiv date disponibile înainte de lansare (buget, gen, regizor, actori etc.).
 
-Dataset propriu construit din TMDB, DBpedia, Wikidata, Wikipedia și Box Office Mojo — 10.000+ filme cu buget și încasări mondiale în USD.
+Dataset propriu construit din TMDB, DBpedia, Wikidata și Wikipedia — 10.000+ filme cu buget și încasări mondiale în USD.
 
 ## Instalare
 
@@ -64,6 +64,15 @@ python extraction/awards.py          # toate filmele din manifest (~5 min fără
 ```
 
 `awards.parquet`, un rând pentru fiecare film din manifest: nominalizări și premii Oscar, Globul de Aur și BAFTA ale regizorului (`director_*`) și ale primilor 3 actori (`cast_*`), numărate **doar înainte de lansare**. Persoanele din TMDB sunt găsite în Wikidata prin P4985 (TMDb person ID). O dată cunoscută doar la nivel de an e tratată ca 31 decembrie (anti-leakage). `*_found_wd` / `*_n` = câte persoane au fost găsite în Wikidata din câte are filmul.
+
+## Surse excluse
+
+| Sursă | Motiv |
+|---|---|
+| The Numbers | lista de bugete nu mai e publică; Terms of Service interzic colectarea automată pentru seturi de date ML |
+| Box Office Mojo (#6) | `robots.txt`: `Disallow: /` pentru orice crawler nelistat; Conditions of Use IMDb interzic scraping-ul fără permisiune scrisă |
+
+Valorile lor ajung oricum indirect în date: infobox-urile Wikipedia le citează ca sursă.
 
 ## Test utilitare
 
