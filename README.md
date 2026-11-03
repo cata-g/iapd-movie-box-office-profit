@@ -41,7 +41,7 @@ python extraction/dbpedia.py --test   # 5 filme cunoscute, doar afișare
 python extraction/dbpedia.py          # rulare completă (~9 min fără cache, câteva secunde cu cache)
 ```
 
-Buget și încasări mondiale în USD din infobox-urile Wikipedia (via DBpedia), filme lansate 1950–2024, un rând per `imdb_id`. Rândurile excluse sunt în `data/interim/dbpedia_unmatched.csv` cu motivul.
+Buget și încasări mondiale în USD din infobox-urile Wikipedia (via DBpedia), filme lansate 1950–2024, un rând per `imdb_id`. Rândurile excluse sunt în `data/interim/dbpedia_unmatched.parquet` cu motivul.
 
 ## Extracție Wikidata + Wikipedia (#4)
 

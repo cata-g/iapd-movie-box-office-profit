@@ -3,11 +3,11 @@ DBpedia extraction: production budget and worldwide gross (USD only) parsed from
 English Wikipedia film infoboxes, linked to imdb_id / tmdb_id via Wikidata.
 
 Run:
-  python extraction/dbpedia.py          # full run -> data/interim/dbpedia.parquet (+ .csv)
+  python extraction/dbpedia.py          # full run -> data/interim/dbpedia.parquet
   python extraction/dbpedia.py --test   # a few known films, printed only
 
 Output: one row per imdb_id, release year 1950-2024 (same window as TMDB, #2).
-Rows without imdb_id / year, or duplicates, go to dbpedia_unmatched.csv with a `reason`.
+Rows without imdb_id / year, or duplicates, go to dbpedia_unmatched.parquet with a `reason`.
 
 Pipeline:
   1. DBpedia SPARQL: every dbo:Film with a budget and/or gross (dbo: or raw dbp: property) typed as usDollar.
@@ -39,7 +39,7 @@ WIKIPEDIA_BATCH = 50        # max titles per API call
 WIKIDATA_BATCH = 200
 
 OUT_PATH = PROJECT_ROOT / "data" / "interim" / "dbpedia.parquet"
-UNMATCHED_PATH = PROJECT_ROOT / "data" / "interim" / "dbpedia_unmatched.csv"
+UNMATCHED_PATH = PROJECT_ROOT / "data" / "interim" / "dbpedia_unmatched.parquet"
 
 # gross/budget outside this range is usually a currency/unit error, but real outliers
 # exist (Paranormal Activity), so these rows are only flagged, not dropped.
@@ -255,7 +255,6 @@ if __name__ == "__main__":
         df, unmatched = split(build(), args.year_min, args.year_max)
         OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(OUT_PATH, index=False)
-        df.to_csv(OUT_PATH.with_suffix(".csv"), index=False, encoding="utf-8")
-        unmatched.to_csv(UNMATCHED_PATH, index=False, encoding="utf-8")
-        print(f"Scris: {OUT_PATH} (+ .csv), {UNMATCHED_PATH}\n")
+        unmatched.to_parquet(UNMATCHED_PATH, index=False)
+        print(f"Scris: {OUT_PATH}, {UNMATCHED_PATH}\n")
         print(report(df, unmatched))

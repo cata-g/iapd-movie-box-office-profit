@@ -4,7 +4,7 @@ worldwide box office (P2142) in USD, whether it is an adaptation (P144) and its
 English Wikipedia article (used by extraction/wikipedia.py).
 
 Run:
-  python extraction/wikidata.py          # full run -> data/interim/wikidata.parquet (+ .csv)
+  python extraction/wikidata.py          # full run -> data/interim/wikidata.parquet
   python extraction/wikidata.py --test   # a few known films, printed only
 
 Pipeline:
@@ -330,6 +330,5 @@ if __name__ == "__main__":
         df = finalize(build(), args.year_min, args.year_max)
         OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(OUT_PATH, index=False)
-        df.to_csv(OUT_PATH.with_suffix(".csv"), index=False, encoding="utf-8")
-        print(f"Scris: {OUT_PATH} (+ .csv)\n")
+        print(f"Scris: {OUT_PATH}\n")
         print(report(df))

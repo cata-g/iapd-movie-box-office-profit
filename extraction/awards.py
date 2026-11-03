@@ -3,7 +3,7 @@ Awards extraction (#35): Oscar, Golden Globe and BAFTA nominations and wins of e
 film's director(s) and top-3 cast, counted only BEFORE the film's release (no leakage).
 
 Run:
-  python extraction/awards.py          # full run -> data/interim/awards.parquet (+ .csv)
+  python extraction/awards.py          # full run -> data/interim/awards.parquet
   python extraction/awards.py --test   # a few known films, printed only
 
 Needs tmdb_movies.parquet / tmdb_extra.parquet (#2, credits) and movies_manifest.json (#5).
@@ -229,6 +229,5 @@ if __name__ == "__main__":
     else:
         df = build()
         df.to_parquet(OUT_PATH, index=False)
-        df.to_csv(OUT_PATH.with_suffix(".csv"), index=False, encoding="utf-8")
-        print(f"Scris: {OUT_PATH} (+ .csv)\n")
+        print(f"Scris: {OUT_PATH}\n")
         print(report(df))

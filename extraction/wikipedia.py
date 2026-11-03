@@ -5,7 +5,7 @@ has_budget_elsewhere marks films that already have a USD budget from another sou
 the others are the "new budgets" Wikipedia adds.
 
 Run:
-  python extraction/wikipedia.py          # full run -> data/interim/wikipedia.parquet (+ .csv)
+  python extraction/wikipedia.py          # full run -> data/interim/wikipedia.parquet
   python extraction/wikipedia.py --test   # a few known articles, printed only
 
 Needs data/interim/wikidata.parquet (#4, gives imdb_id <-> enwiki_title).
@@ -275,6 +275,5 @@ if __name__ == "__main__":
     else:
         df = build(films_with_articles())
         df.to_parquet(OUT_PATH, index=False)
-        df.to_csv(OUT_PATH.with_suffix(".csv"), index=False, encoding="utf-8")
-        print(f"Scris: {OUT_PATH} (+ .csv)\n")
+        print(f"Scris: {OUT_PATH}\n")
         print(report(df))
