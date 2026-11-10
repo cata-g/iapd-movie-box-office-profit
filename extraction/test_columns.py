@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from extraction.columns import CATEGORIES, EXCLUDED, categories, feature_columns
 from extraction.utils import PROJECT_ROOT
 
-CSV = PROJECT_ROOT / "data" / "processed" / "movies_dataset.csv"
+DATASET = PROJECT_ROOT / "data" / "processed" / "movies_dataset.parquet"
 
 
 def test_no_excluded_in_features(df: pd.DataFrame):
@@ -43,7 +43,7 @@ def test_new_column_fails(df: pd.DataFrame):
 
 
 if __name__ == "__main__":
-    df = pd.read_csv(CSV, nrows=200, low_memory=False)
+    df = pd.read_parquet(DATASET)
     test_no_excluded_in_features(df)
     test_every_column_once(df)
     test_new_column_fails(df)

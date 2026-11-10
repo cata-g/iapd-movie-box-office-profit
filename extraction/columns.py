@@ -1,5 +1,5 @@
 """
-Categoriile coloanelor din data/processed/movies_dataset.csv (#45).
+Categoriile coloanelor din data/processed/movies_dataset.parquet (#45).
 
     from extraction.columns import feature_columns
     X = df[feature_columns(df)]
@@ -33,7 +33,8 @@ META = [
     # suma în moneda ei, moneda ROI-ului și cursul folosit
     "*_amount", "*_currency", "fx_year", "*_fx_rate",
     # calitatea datelor
-    "budget_is_range", "gross_is_domestic", "gross_is_rental",
+    "budget_is_range", "gross_is_domestic", "gross_is_rental", "gross_is_single_market",
+    "gross_is_local_currency",
 ]
 
 LEAKAGE = ["vote_average", "vote_count"]

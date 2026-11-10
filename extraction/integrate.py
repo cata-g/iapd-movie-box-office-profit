@@ -4,7 +4,7 @@ Issue #27 — Integrare și curățare → dataset final
 Pornește de la manifest, unește toate tabelele din data/interim/ pe imdb_id,
 alege bugetul și încasările finale, aplică regulile de curățare, calculează
 ținta și caracteristicile și scrie:
-    data/processed/movies_dataset.csv
+    data/processed/movies_dataset.parquet
     docs/integration_report.md
 
 Usage:
@@ -30,7 +30,7 @@ from extraction.utils import (BUDGET_RANGE, GROSS_RANGE, PROJECT_ROOT,
 
 INTERIM = PROJECT_ROOT / "data" / "interim"
 PROCESSED = PROJECT_ROOT / "data" / "processed"
-OUT_CSV = PROCESSED / "movies_dataset.csv"
+OUT_PATH = PROCESSED / "movies_dataset.parquet"   # datele se păstrează doar în parquet (#51)
 REPORT = PROJECT_ROOT / "docs" / "integration_report.md"
 
 # Ordinea de prioritate (CLAUDE.md); coloanele țin valoarea în USD a fiecărei surse
@@ -96,6 +96,9 @@ ASIA = set("AE AF BD BN BT CN HK ID IL IN IQ IR JO JP KG KH KP KR KW KZ LA LB LK
            "MV MY NP OM PH PK PS QA SA SG SY TH TJ TL TM TR TW UZ VN YE".split())
 
 TOP_KEYWORDS = 30
+# Istoricul regizorului/actorilor folosește doar filmele lansate cu cel puțin 6 luni înainte:
+# încasările unui film abia lansat nu sunt încă cunoscute (#49)
+PREV_MIN_GAP = pd.Timedelta(days=182)
 
 # Etichete de ton TMDB: descriu reacția publicului după vizionare → leakage, nu intră în top keywords
 TONE_KEYWORDS = set("""
@@ -162,7 +165,7 @@ def load_sources(manifest: dict) -> pd.DataFrame:
                      "gross_wd_currency", "is_adaptation", "adaptation_type"]])
     df = df.join(wp[["budget_wp", "gross_wp", "budget_wp_amount", "budget_wp_currency", "budget_wp_note",
                      "budget_wp_range", "gross_wp_amount", "gross_wp_currency", "gross_wp_note",
-                     "gross_wp_domestic", "gross_wp_rental",
+                     "gross_wp_domestic", "gross_wp_rental", "gross_wp_single_market", "gross_wp_worldwide",
                      "based_on_wp", "distributor_wp"]])
     df = df.join(aw)
     df = df.merge(rd[["tmdb_id", "first_theatrical", "first_digital"]], on="tmdb_id", how="left").set_index(df.index)
@@ -450,6 +453,19 @@ def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "
         & ((df["gross_dbp_amount"] - df["gross_wp_amount"]).abs() <= DBP_SAME_AMOUNT * df["gross_wp_amount"]))
     df["gross_is_domestic"] = from_infobox & df["gross_wp_domestic"].fillna(False).astype(bool)
     df["gross_is_rental"] = from_infobox & df["gross_wp_rental"].fillna(False).astype(bool)
+    # #49: orice piață unică din eticheta infobox-ului (UK, Australia, Japan ... inclusiv SUA/Canada) și,
+    # mai slab, încasări în altă monedă fără „worldwide”: de obicei sunt doar cele de acasă
+    df["gross_is_single_market"] = from_infobox & df["gross_wp_single_market"].fillna(False).astype(bool)
+    labelled_ww = from_infobox & df["gross_wp_worldwide"].fillna(False).astype(bool)
+    df["gross_is_local_currency"] = (g_cur != "USD") & ~df["gross_is_single_market"] & ~labelled_ww
+    df["_gross_currency"] = g_cur
+
+    # Valori de umplutură (#49): aceeași sursă scrie exact aceeași sumă la buget și la încasări
+    # (un lot de filme din TMDB are 10.000 $ / 10.000 $). Egalitatea între surse diferite e
+    # posibilă (filme vechi cu „rentals” rotunjite egale cu bugetul) și nu se scoate.
+    placeholder = (df["budget_source"] == df["gross_source"]) & np.isclose(df["budget"], df["worldwide_gross"])
+    step("valori identice", ~placeholder,
+         "aceeași sursă dă exact aceeași sumă pentru buget și încasări (valoare de umplutură, ROI = 1)")
 
     df["release_date"] = pd.to_datetime(df["release_date"], errors="coerce")
     step("dată lansare", df["release_date"].notna(),
@@ -506,9 +522,19 @@ def _country_group(code: str) -> str:
     return "other"
 
 
+def recent_prior_count(df: pd.DataFrame) -> int:
+    """Câte filme au un film anterior al regizorului lansat cu mai puțin de PREV_MIN_GAP înainte."""
+    dates = defaultdict(list)
+    for people, date in zip(df["director_ids"], df["release_date"]):
+        for p in _as_list(people):
+            dates[p].append(date)
+    return int(sum(any(date - PREV_MIN_GAP < d < date for p in _as_list(people) for d in dates[p])
+                   for people, date in zip(df["director_ids"], df["release_date"])))
+
+
 def prev_history(df: pd.DataFrame, col: str, prefix: str, threshold: float) -> pd.DataFrame:
     """Pentru fiecare film și fiecare persoană din `col`: filmele din dataset ale
-    persoanei lansate strict înainte. Statisticile se calculează per persoană și
+    persoanei lansate cu cel puțin PREV_MIN_GAP (6 luni) înainte, când încasările lor erau cunoscute. Statisticile se calculează per persoană și
     apoi se mediază peste persoanele cu istoric:
       {prefix}_prev_films            nr. maxim de filme anterioare
       {prefix}_prev_mean_roi         media ROI (cerută în issue; sensibilă la hituri extreme)
@@ -523,7 +549,7 @@ def prev_history(df: pd.DataFrame, col: str, prefix: str, threshold: float) -> p
     for people, date in zip(df[col], df["release_date"]):
         counts, means, logs, rates = [], [], [], []
         for p in _as_list(people):
-            prior = np.array([r for d, r in films_by_person[p] if d < date])
+            prior = np.array([r for d, r in films_by_person[p] if d <= date - PREV_MIN_GAP])
             counts.append(len(prior))
             if len(prior):
                 means.append(prior.mean())
@@ -671,6 +697,8 @@ def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
     out["roi_currency"] = df["roi_currency"]
     out["gross_is_domestic"] = df["gross_is_domestic"].astype(int)
     out["gross_is_rental"] = df["gross_is_rental"].astype(int)
+    out["gross_is_single_market"] = df["gross_is_single_market"].astype(int)
+    out["gross_is_local_currency"] = df["gross_is_local_currency"].astype(int)
     # Calitatea datelor: bugetul final e mijlocul unui interval din infobox („$10–15 million”)
     wp = pd.to_numeric(df["budget_wp"], errors="coerce")
     out["budget_is_range"] = (df["budget_wp_range"].fillna(False).astype(bool)
@@ -820,7 +848,7 @@ def meta_section(out: pd.DataFrame) -> str:
     n_features = len(feature_columns(out))
     return f"""## De ce excludem coloanele META
 
-`extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; în model intră doar cele {n_features} din FEATURES (`feature_columns(df)`), iar `extraction/test_columns.py` verifică asta pe CSV. META sunt cele {len(meta)} coloane despre **date**, nu despre film: sursa valorii, câte surse au o valoare și câte sunt de acord, sumele brute, monedele și cursurile. Ele prezic ținta, pentru că un film cu încasări raportate peste tot e de obicei un film cunoscut, care a mers bine:
+`extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; în model intră doar cele {n_features} din FEATURES (`feature_columns(df)`), iar `extraction/test_columns.py` verifică asta pe dataset-ul final. META sunt cele {len(meta)} coloane despre **date**, nu despre film: sursa valorii, câte surse au o valoare și câte sunt de acord, sumele brute, monedele și cursurile. Ele prezic ținta, pentru că un film cu încasări raportate peste tot e de obicei un film cunoscut, care a mers bine:
 
 **% profitabile după numărul de surse cu încasări**
 
@@ -870,29 +898,62 @@ Filmele scoase sunt mult mai mici și mai puțin cunoscute (mai puține voturi, 
 """
 
 
-def target_quality_section(out: pd.DataFrame) -> str:
+def target_quality_section(out: pd.DataFrame, stats: dict) -> str:
     dom, ren = out["gross_is_domestic"] == 1, out["gross_is_rental"] == 1
-    either = dom | ren
+    single, local = out["gross_is_single_market"] == 1, out["gross_is_local_currency"] == 1
+    partial = single | ren
     decade = (out["release_year"] // 10 * 10).astype(int)
     rows = []
     for d, g in out.groupby(decade):
-        e = either[g.index]
+        e = partial[g.index]
         rows.append({"Deceniu": f"{d}–{min(d + 9, YEAR_MAX)}", "Filme": int(len(g)),
-                     "Doar SUA/Canada": int(dom[g.index].sum()), "Rentals": int(ren[g.index].sum()),
+                     "O singură piață": int(single[g.index].sum()), "Rentals": int(ren[g.index].sum()),
                      "% din deceniu": _pct(e.mean()),
                      "% profitabile (cu ele / fără ele)": f"{_pct(g['profitable'].mean())} / "
                                                           f"{_pct(g.loc[~e, 'profitable'].mean())}"})
-    return f"""## Calitatea țintei: încasări doar SUA/Canada sau „rentals”
+    cur = stats.get("gross_currency", pd.Series("USD", index=out.index))
+    group = np.where(cur == "USD", "USD", np.where(cur == "INR", "INR", "alte monede"))
+    by_cur = []
+    for k in ("USD", "INR", "alte monede"):
+        m = pd.Series(group == k, index=out.index)
+        row = {"Moneda încasărilor": k}
+        for label, mask in (("o singură piață / rentals", m & (single | ren)),
+                            ("monedă locală fără „worldwide”", m & local & ~(single | ren)),
+                            ("restul", m & ~(single | ren | local))):
+            row[label] = (f"{_n(int(mask.sum()))} filme, {_pct(out.loc[mask, 'profitable'].mean())}"
+                          if mask.sum() >= 30 else f"{_n(int(mask.sum()))} filme")
+        by_cur.append(row)
+    return f"""## Calitatea țintei: încasări parțiale
 
-Ținta presupune încasări **mondiale**. La unele filme, singura cifră din infobox e alta:
-- `gross_is_domestic` = 1: încasări doar în SUA/Canada, fără cifră mondială ({_n(int(dom.sum()))} filme, {_pct(out.loc[dom, "profitable"].mean())} profitabile);
-- `gross_is_rental` = 1: „rentals”, adică partea care revine distribuitorului, cam jumătate din încasări ({_n(int(ren.sum()))} filme, {_pct(out.loc[ren, "profitable"].mean())} profitabile).
+Ținta presupune încasări **mondiale**. La unele filme, singura cifră din infobox e alta (coloane META, nu intră în model):
+- `gross_is_single_market` = 1: încasările unei singure piețe, după eticheta din infobox („$12 million (U.S.)”, „£49,981 (UK)”, „A$3.2 million (Australia)”): {_n(int(single.sum()))} filme, {_pct(out.loc[single, "profitable"].mean())} profitabile. `gross_is_domestic` = 1 e cazul SUA/Canada ({_n(int(dom.sum()))} filme).
+- `gross_is_rental` = 1: „rentals”, adică partea care revine distribuitorului, cam jumătate din încasări: {_n(int(ren.sum()))} filme, {_pct(out.loc[ren, "profitable"].mean())} profitabile.
+- `gross_is_local_currency` = 1 (mai slab): încasări în altă monedă decât USD, fără etichetă de piață și fără „worldwide”. De obicei sunt doar cele de acasă, dar nu e sigur: {_n(int(local.sum()))} filme, {_pct(out.loc[local, "profitable"].mean())} profitabile.
 
-La aceste filme, ROI-ul e **subestimat**, deci unele sunt etichetate greșit ca neprofitabile. Sunt concentrate în filmele vechi:
+La aceste filme, ROI-ul e **subestimat**, deci unele sunt etichetate greșit ca neprofitabile. Încasările parțiale (o singură piață sau rentals) sunt concentrate în filmele vechi:
 
 {_md_table(rows)}
 
-Sunt coloane META (nu intră în model). `extraction/sensitivity.py` arată ținta și fără aceste filme. Pentru antrenare, varianta cea mai sigură e să le scoatem sau să le dăm o pondere mai mică.
+Sumele în moneda locală afectează filmele din afara SUA. Fără o corecție, un model ar învăța că filmele non-americane eșuează, iar asta ar veni din date, nu din realitate. Tabelul arată filmele și % profitabile pentru fiecare categorie (procentul apare de la 30 de filme în sus):
+
+{_md_table(by_cur)}
+
+Filmele cu încasări în alte monede (fără USD și INR) sunt profitabile mult mai rar decât filmele în USD fără semnale, ceea ce confirmă că suma lor e de obicei doar cea de acasă. Filmele indiene (INR) merg în sens invers. Infobox-urile lor dau de regulă încasările mondiale, adesea anunțate de producători și cu taxe incluse, deci probabil umflate. Același semnal (monedă locală fără „worldwide”) are așadar sensuri diferite pentru cele două grupuri.
+
+`extraction/sensitivity.py` arată ținta și fără aceste filme. Pentru antrenare, varianta cea mai sigură e să le scoatem sau să le dăm o pondere mai mică, iar concluziile despre țară sau limbă trebuie verificate și fără ele.
+"""
+
+
+def modeling_limits_section(out: pd.DataFrame, stats: dict) -> str:
+    votes = pd.to_numeric(out["vote_count"], errors="coerce")
+    low, high = votes < 20, votes >= 1000
+    year = out["release_year"]
+    rate = lambda m: _pct(out.loc[m, "profitable"].mean())
+    before, covid, after = year.between(2017, 2019), year.between(2020, 2021), year.between(2022, YEAR_MAX)
+    return f"""## Limite de care trebuie să țină cont modelarea
+
+- **Selecție după popularitate.** Lista de bază din TMDB cere cel puțin 5 voturi, adunate după lansare: {_n(stats.get("from_discover", 0))} din {_n(len(out))} filme au intrat așa. Dataset-ul conține deci filme care „au fost observate”, iar profitabilitatea crește cu popularitatea: {rate(low)} profitabile sub 20 de voturi, {rate(high)} peste 1.000. Fără descărcări noi nu se poate corecta. Concluziile sunt valabile pentru filmele cunoscute, nu pentru toată producția.
+- **COVID (2020–2021).** Piața cinematografelor s-a prăbușit: {rate(covid)} profitabile în 2020–2021, față de {rate(before)} în 2017–2019 și {rate(after)} în 2022–{YEAR_MAX}. La o împărțire după an, setul de test ar conține tocmai acești ani atipici. Recomandare: un indicator pentru 2020–2021 sau acești ani raportați separat.
 """
 
 
@@ -928,7 +989,7 @@ def write_report(out: pd.DataFrame, funnel: list, args, stats: dict = None) -> N
 
 Generat cu `python extraction/integrate.py --threshold {threshold} --roi-rule {args.roi_rule} --budget-choice {args.budget_choice}`.
 
-**Rezultat:** {_n(n)} filme în `data/processed/movies_dataset.csv`.
+**Rezultat:** {_n(n)} filme în `data/processed/movies_dataset.parquet`.
 
 ## Ce filme am scos
 
@@ -936,7 +997,7 @@ Generat cu `python extraction/integrate.py --threshold {threshold} --roi-rule {a
 
 {streaming_section(stats)}
 {dropped_section(out, stats)}
-{target_quality_section(out)}
+{target_quality_section(out, stats)}
 ## Ținta
 
 Un film e **profitabil** dacă încasările sunt de cel puțin {t} ori bugetul (`roi = încasări / buget`).
@@ -994,9 +1055,10 @@ Câteva filme au un ROI uriaș ({out.loc[out["roi"].idxmax(), "title"]}: {_n(rou
 
 Media simplă aproape nu are legătură cu ținta; variantele noi au.
 
+{modeling_limits_section(out, stats)}
 ## Fără informații de după lansare (anti-leakage)
 
-- Premiile și istoricul regizorului/actorilor vin doar din filmele lansate **înainte**.
+- Premiile și istoricul regizorului/actorilor vin doar din filmele lansate **înainte**. Pentru istoricul ROI, filmul anterior trebuie lansat cu cel puțin 6 luni înainte (#49): încasările unui film abia lansat nu sunt încă cunoscute. Înainte de această regulă, {_n(stats.get("prev_recent", 0))} filme foloseau ROI-ul unui film al regizorului lansat cu mai puțin de 6 luni în urmă.
 - **Franciza** (#47): colecțiile TMDB se creează după ce apare o continuare, iar continuarea se face de obicei pentru că primul film a avut succes. Cu vechea definiție (`is_franchise` = filmul e într-o colecție), primul film al unei serii ar fi purtat informație din viitor:
 
 {franchise_table}
@@ -1034,14 +1096,18 @@ def main() -> None:
     df = clean(df, funnel, gross_only=count_gross_only(df.index), roi_rule=args.roi_rule,
                budget_choice=args.budget_choice, stats=stats)
     stats["franchise"] = franchise_stats(df, args.threshold)
+    stats["prev_recent"] = recent_prior_count(df)
+    stats["gross_currency"] = df["_gross_currency"].reset_index(drop=True)
     stats["keywords"] = keyword_stats(df, args.threshold)
     out = features(df, args.threshold)
 
     PROCESSED.mkdir(parents=True, exist_ok=True)
-    out.to_csv(OUT_CSV, index=False, encoding="utf-8", lineterminator="\n")
+    out.to_parquet(OUT_PATH, index=False)
+    discover = pd.read_parquet(INTERIM / "tmdb_movies.parquet", columns=["imdb_id"])["imdb_id"]
+    stats["from_discover"] = int(out["imdb_id"].isin(discover).sum())
     write_report(out, funnel, args, stats)
 
-    print(f"Scris {OUT_CSV.relative_to(PROJECT_ROOT)}: {len(out):,} filme, {len(out.columns)} coloane")
+    print(f"Scris {OUT_PATH.relative_to(PROJECT_ROOT)}: {len(out):,} filme, {len(out.columns)} coloane")
     print(f"Scris {REPORT.relative_to(PROJECT_ROOT)}")
     for f in funnel:
         print(f"  {f['Pas']:15s} -{f['Scoase']:>6,}  -> {f['Rămân']:>6,}")

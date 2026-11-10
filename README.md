@@ -98,7 +98,7 @@ Opțiuni:
 
 `sensitivity.py` refolosește aceleași funcții și schimbă pe rând câte o decizie (alegerea bugetului, a încasărilor, `--roi-rule`, pragul 2 / 2,5 / 3), cu numărul de filme, % profitabile și câte etichete se schimbă.
 
-Citește doar `data/interim/` (fără cereri HTTP, câteva secunde) și scrie `data/processed/movies_dataset.csv` (un rând per film) și [docs/integration_report.md](docs/integration_report.md): pâlnia de curățare (inclusiv filmele fără buget și cele de streaming), monedele, profilul filmelor scoase, marile studiouri și de ce excludem coloanele META.
+Citește doar `data/interim/` (fără cereri HTTP, câteva secunde) și scrie `data/processed/movies_dataset.parquet` (un rând per film; datele se păstrează doar în parquet) și [docs/integration_report.md](docs/integration_report.md): pâlnia de curățare (inclusiv filmele fără buget și cele de streaming), monedele, profilul filmelor scoase, marile studiouri și de ce excludem coloanele META.
 
 Filmele de streaming cu o lansare doar simbolică în cinema ies din populație (pasul „streaming”): distribuitor de streaming sau lansare digitală la cel mult 30 de zile după cinema, **și** încasări sub 5% din buget.
 
@@ -134,13 +134,13 @@ Filmele de streaming cu o lansare doar simbolică în cinema ies din populație 
 | `country_{us,europe,asia,other}` | grupul țărilor de producție (un film poate avea mai multe) |
 | `is_franchise`, `sequel_number` | continuare: au apărut deja filme din aceeași colecție TMDB; câte (0 = primul film al seriei sau film independent). Primul film al unei serii nu contează ca franciză: colecția apare abia după ce succesul lui aduce o continuare (leakage, #47) |
 | `is_adaptation`, `adaptation_type` | ecranizare (Wikidata P144, keywords „based on …” sau `based on` din infobox); tipul sursei din Wikidata, `other` dacă e ecranizare fără tip cunoscut, `none` altfel |
-| `director_prev_films` | nr. de filme anterioare din dataset ale regizorului |
+| `director_prev_films` | nr. de filme anterioare din dataset ale regizorului, lansate cu cel puțin 6 luni înainte (încasările lor erau deja cunoscute, #49) |
 | `director_prev_mean_roi` | ROI-ul mediu al acelor filme (gol = fără istoric); sensibil la un singur hit extrem |
 | `director_prev_mean_log_roi` | media lui ln(ROI) a acelor filme; variantă robustă (0 = buget recuperat exact) |
 | `director_prev_profitable_rate` | fracția acelor filme cu ROI ≥ prag; variantă robustă |
 | `cast_prev_*` | aceleași patru coloane pentru primii 3 actori (maxim de filme; celelalte calculate per actor și mediate) |
 
-**Surse, monede și calitatea datelor (META, nu intră în model):** `budget_source` / `gross_source` (sursa valorii finale), `*_n_sources` (câte surse au valoare), `*_n_agree` (câte surse independente sunt la ±25% de valoarea finală; DBpedia și Wikipedia contează o dată), `*_conflict` (max/min > 1,25), valorile brute în USD `budget_tmdb`, `budget_dbp`, `budget_wd`, `budget_wp`, `gross_wp`, `worldwide_gross_dbp`, `gross_wd`, `revenue_tmdb`, sumele în moneda lor `budget_<src>_amount` / `budget_<src>_currency` și `gross_<src>_amount` / `gross_<src>_currency` (`src` = tmdb, dbp, wd, wp), `roi_currency`, `fx_year`, `budget_fx_rate`, `gross_fx_rate` (cursul folosit; 1 = USD, gol = suma în USD din infobox), `budget_is_range` (bugetul final e mijlocul unui interval din infobox), `gross_is_domestic` / `gross_is_rental` (încasările alese sunt doar SUA/Canada, respectiv „rentals”: ROI subestimat, mai ales la filmele vechi, #47). Ele prezic ținta (vezi raportul), deci ar fi leakage.
+**Surse, monede și calitatea datelor (META, nu intră în model):** `budget_source` / `gross_source` (sursa valorii finale), `*_n_sources` (câte surse au valoare), `*_n_agree` (câte surse independente sunt la ±25% de valoarea finală; DBpedia și Wikipedia contează o dată), `*_conflict` (max/min > 1,25), valorile brute în USD `budget_tmdb`, `budget_dbp`, `budget_wd`, `budget_wp`, `gross_wp`, `worldwide_gross_dbp`, `gross_wd`, `revenue_tmdb`, sumele în moneda lor `budget_<src>_amount` / `budget_<src>_currency` și `gross_<src>_amount` / `gross_<src>_currency` (`src` = tmdb, dbp, wd, wp), `roi_currency`, `fx_year`, `budget_fx_rate`, `gross_fx_rate` (cursul folosit; 1 = USD, gol = suma în USD din infobox), `budget_is_range` (bugetul final e mijlocul unui interval din infobox), `gross_is_domestic` / `gross_is_rental` (încasările alese sunt doar SUA/Canada, respectiv „rentals”: ROI subestimat, mai ales la filmele vechi, #47), `gross_is_single_market` (eticheta din infobox arată o singură piață, orice țară) și `gross_is_local_currency` (încasări în altă monedă, fără „worldwide”: de obicei doar cele de acasă; la filmele indiene, de obicei mondiale, #49). Ele prezic ținta (vezi raportul), deci ar fi leakage.
 
 **Doar pentru experimentul leakage vs. no-leakage:** `vote_average`, `vote_count`.
 
