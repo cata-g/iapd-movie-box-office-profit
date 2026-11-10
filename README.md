@@ -160,6 +160,7 @@ Valorile lor ajung oricum indirect în date: infobox-urile Wikipedia le citează
 python extraction/test_utils.py       # cache și 404
 python extraction/test_wikipedia.py   # sumele din infobox, în orice monedă
 python extraction/test_columns.py     # coloanele excluse din model (după integrate.py)
+python -m pytest extraction           # toate testele de mai sus, cu pytest
 ```
 
 `test_utils.py` verifică că al doilea apel pe același URL vine din cache (fără request HTTP) și că un 404 returnează `None` fără excepție. `test_wikipedia.py` verifică parserul de sume (`A$2,417,000` → AUD, `{{INR|55 crore}}` → 5,5·10⁸ INR, `£800,000 ($1.4 million)` → GBP + USD scris explicit, `¥` rezolvat după țară).
