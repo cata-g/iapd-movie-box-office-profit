@@ -250,20 +250,40 @@ def _segment(s: str) -> str:
 DOMESTIC = re.compile(r"\b(?:u\.?s\.?a?|united states|domestic|north americ\w*|canada|american)\b", re.I)
 
 
-def gross_scope(raw: str | None) -> tuple[bool, bool]:
-    """(doar SUA/Canada, rentals) pentru suma aleasă de parse_money din câmpul `gross`.
-    „$1.8 million (US/Canada rentals)” -> (True, True); „$33 million (Worldwide)” -> (False, False).
-    Rentals = partea care revine distribuitorului, cam jumătate din încasări (filme vechi)."""
+# Piețe unice: o țară, un oraș sau „domestic” (#49). „uk/us” sau „Japan rentals” sunt tot
+# încasări parțiale; „overseas”, „international”, „foreign” nu sunt o singură piață, dar nici mondiale.
+SINGLE_MARKET = re.compile(
+    r"\b(?:u\.?s\.?a?|united states|domestic|north americ\w*|canad\w*|american|local|home|"
+    r"uk|u\.k\.|united kingdom|britain|england|ireland|france|germany|west germany|italy|spain|portugal|"
+    r"netherlands|belgium|sweden|norway|denmark|finland|iceland|poland|czech\w*|hungary|romania|greece|"
+    r"turkey|russia|soviet|ussr|austria|switzerland|israel|iran|egypt|nigeria|south africa|"
+    r"japan|china|mainland china|hong kong|hk|taiwan|taipei|korea|south korea|india|kerala|tamil nadu|"
+    r"pakistan|bangladesh|sri lanka|nepal|thailand|vietnam|philippines|indonesia|malaysia|singapore|"
+    r"australia|new zealand|mexico|brazil|argentina|chile|colombia|peru|venezuela|cuba)\b", re.I)
+
+
+class Scope(NamedTuple):
+    domestic: bool        # doar SUA/Canada
+    rental: bool          # „rentals” = partea distribuitorului
+    single_market: bool   # o singură piață (orice țară, inclusiv SUA/Canada)
+    worldwide: bool       # suma e marcată worldwide / total
+
+
+def gross_scope(raw: str | None) -> Scope:
+    """Ce acoperă suma aleasă de parse_money din câmpul `gross`, după eticheta din infobox:
+    „$1.8 million (US/Canada rentals)” -> SUA/Canada + rentals; „£49,981 (UK)” -> o singură piață;
+    „$33 million (Worldwide)” -> mondial. Rentals = partea distribuitorului, ~jumătate din încasări."""
     if not raw:
-        return False, False
+        return Scope(False, False, False, False)
     s = _segment(clean(raw))
     m = _first_money(s)
     if m is None:
-        return False, False
+        return Scope(False, False, False, False)
     after = s[m.end():].split(" ; ")[0]          # eticheta de după sumă: „(US/Canada)”
-    domestic = bool(DOMESTIC.search(after)) and not WORLDWIDE.search(s)
-    rental = "rental" in s.lower()
-    return domestic, rental
+    worldwide = bool(WORLDWIDE.search(s))
+    single = bool(SINGLE_MARKET.search(after)) and not worldwide
+    return Scope(domestic=bool(DOMESTIC.search(after)) and not worldwide,
+                 rental="rental" in s.lower(), single_market=single, worldwide=worldwide)
 
 
 def parse_money(raw: str | None, countries=()) -> Money:
@@ -468,7 +488,7 @@ def build(films: pd.DataFrame) -> pd.DataFrame:
             "budget_wp_amount": budget.amount, "budget_wp_currency": budget.currency,
             "gross_wp_amount": gross.amount, "gross_wp_currency": gross.currency,
             "budget_wp_note": budget.note or None, "gross_wp_note": gross.note or None,
-            "gross_wp_domestic": gross_scope(gross_raw)[0], "gross_wp_rental": gross_scope(gross_raw)[1],
+            **{f"gross_wp_{k}": v for k, v in gross_scope(gross_raw)._asdict().items()},
             "budget_wp_other_currency": budget.currency not in (None, "USD"),
             "gross_wp_other_currency": gross.currency not in (None, "USD"),
             "distributor_wp": distributors[0] if distributors else None,
@@ -504,7 +524,8 @@ def report(df: pd.DataFrame) -> str:
         f"  bugete noi în USD adăugate de Wikipedia: {new['budget_wp'].notna().sum()} "
         f"(din care intervale: {(new['budget_wp'].notna() & new['budget_wp_range']).sum()})",
         f"  buget doar în altă monedă: {new['budget_wp_other_currency'].sum()}",
-        f"Încasări doar SUA/Canada: {df['gross_wp_domestic'].sum()}; rentals: {df['gross_wp_rental'].sum()}",
+        f"Încasări doar SUA/Canada: {df['gross_wp_domestic'].sum()}; o singură piață: "
+        f"{df['gross_wp_single_market'].sum()}; rentals: {df['gross_wp_rental'].sum()}; worldwide: {df['gross_wp_worldwide'].sum()}",
         f"Cu distribuitor în infobox: {df['distributor_wp'].notna().sum()} "
         f"(top: {', '.join(f'{k}={v}' for k, v in df['distributor_wp'].value_counts().head(5).items())})",
         f"Cu câmp based_on în infobox: {df['based_on_wp'].notna().sum()}",

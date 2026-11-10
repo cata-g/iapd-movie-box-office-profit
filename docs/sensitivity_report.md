@@ -40,11 +40,12 @@ Varianta implicită: **17.911 filme, 32,2% profitabile**.
 | Varianta | Filme | % profitabile | Etichete schimbate | Filme intrate / ieșite |
 |---|---|---|---|---|
 | toate filmele (implicit) | 17.911 | 32,2% | 0 (0,0%) | +0 / −0 |
-| fără încasări doar SUA/Canada sau rentals | 16.739 | 32,7% | 0 (0,0%) | +0 / −1.172 |
+| fără încasări parțiale (o singură piață, rentals) | 16.367 | 33,0% | 0 (0,0%) | +0 / −1.544 |
+| și fără moneda locală fără „worldwide” | 13.573 | 32,5% | 0 (0,0%) | +0 / −4.338 |
 
 ## Concluzie
 
 - Deciziile despre date (ce buget sau ce încasări alegem, ce ROI extrem păstrăm) mută rata de filme profitabile doar între 31,3% și 32,2% și schimbă cel mult 2,5% din etichete (încasări: tmdb → wikipedia → dbpedia → wikidata). Ținta e **robustă** la aceste alegeri: doar câteva sute de filme, cele cu surse în dezacord, își schimbă clasa.
-- Fără filmele cu încasări doar SUA/Canada sau „rentals” (#47) rămân 16.739 filme, cu 32,7% profitabile, față de 32,2%. Etichetele celorlalte filme nu se schimbă; rata se mișcă doar pentru că se scot filme vechi, etichetate cel mai probabil greșit ca neprofitabile.
+- Fără filmele cu încasări parțiale (o singură piață sau „rentals”) rămân 16.367 filme, cu 33,0% profitabile; fără și cele în moneda locală fără „worldwide”, 13.573 filme, cu 32,5% profitabile (implicit: 32,2%). Etichetele celorlalte filme nu se schimbă: rata crește doar pentru că se scot filme etichetate, cel mai probabil, greșit ca neprofitabile.
 - Pragul contează mult mai mult: varianta cu cel mai mare efect e prag 2, cu 6,7% etichete schimbate. Pragul de 2,5 e o convenție (bugetul nu include marketingul, iar cinematografele păstrează aproximativ jumătate din bilete), deci rezultatele modelului trebuie raportate și pentru pragurile 2 și 3, nu doar pentru 2,5.
 - Dintre cele 771 filme care își schimbă eticheta într-una din variantele despre date, 87,4% au surse în dezacord la buget sau la încasări (`budget_conflict` / `gross_conflict`), față de 20,2% în tot dataset-ul. Incertitudinea e concentrată în filmele cu surse care nu se pun de acord, nu în regula aleasă.
