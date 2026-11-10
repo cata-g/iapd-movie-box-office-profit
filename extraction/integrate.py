@@ -944,6 +944,19 @@ Filmele cu încasări în alte monede (fără USD și INR) sunt profitabile mult
 """
 
 
+def modeling_limits_section(out: pd.DataFrame, stats: dict) -> str:
+    votes = pd.to_numeric(out["vote_count"], errors="coerce")
+    low, high = votes < 20, votes >= 1000
+    year = out["release_year"]
+    rate = lambda m: _pct(out.loc[m, "profitable"].mean())
+    before, covid, after = year.between(2017, 2019), year.between(2020, 2021), year.between(2022, YEAR_MAX)
+    return f"""## Limite de care trebuie să țină cont modelarea
+
+- **Selecție după popularitate.** Lista de bază din TMDB cere cel puțin 5 voturi, adunate după lansare: {_n(stats.get("from_discover", 0))} din {_n(len(out))} filme au intrat așa. Dataset-ul conține deci filme care „au fost observate”, iar profitabilitatea crește cu popularitatea: {rate(low)} profitabile sub 20 de voturi, {rate(high)} peste 1.000. Fără descărcări noi nu se poate corecta. Concluziile sunt valabile pentru filmele cunoscute, nu pentru toată producția.
+- **COVID (2020–2021).** Piața cinematografelor s-a prăbușit: {rate(covid)} profitabile în 2020–2021, față de {rate(before)} în 2017–2019 și {rate(after)} în 2022–{YEAR_MAX}. La o împărțire după an, setul de test ar conține tocmai acești ani atipici. Recomandare: un indicator pentru 2020–2021 sau acești ani raportați separat.
+"""
+
+
 def write_report(out: pd.DataFrame, funnel: list, args, stats: dict = None) -> None:
     threshold = args.threshold
     stats = stats or {}
@@ -1042,6 +1055,7 @@ Câteva filme au un ROI uriaș ({out.loc[out["roi"].idxmax(), "title"]}: {_n(rou
 
 Media simplă aproape nu are legătură cu ținta; variantele noi au.
 
+{modeling_limits_section(out, stats)}
 ## Fără informații de după lansare (anti-leakage)
 
 - Premiile și istoricul regizorului/actorilor vin doar din filmele lansate **înainte**. Pentru istoricul ROI, filmul anterior trebuie lansat cu cel puțin 6 luni înainte (#49): încasările unui film abia lansat nu sunt încă cunoscute. Înainte de această regulă, {_n(stats.get("prev_recent", 0))} filme foloseau ROI-ul unui film al regizorului lansat cu mai puțin de 6 luni în urmă.
@@ -1089,6 +1103,8 @@ def main() -> None:
 
     PROCESSED.mkdir(parents=True, exist_ok=True)
     out.to_csv(OUT_CSV, index=False, encoding="utf-8", lineterminator="\n")
+    discover = pd.read_parquet(INTERIM / "tmdb_movies.parquet", columns=["imdb_id"])["imdb_id"]
+    stats["from_discover"] = int(out["imdb_id"].isin(discover).sum())
     write_report(out, funnel, args, stats)
 
     print(f"Scris {OUT_CSV.relative_to(PROJECT_ROOT)}: {len(out):,} filme, {len(out.columns)} coloane")
