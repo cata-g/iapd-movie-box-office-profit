@@ -43,7 +43,7 @@ FEATURES = [
     "budget",
     "director_award_noms_before", "director_award_wins_before",
     "cast_award_noms_before", "cast_award_wins_before",
-    "major_studio", "major_distributor", "major_any",
+    "major_studio", "major_distributor", "major_any", "streaming_distributor",
     "release_year", "release_month", "release_weekday",
     "genre_*", "runtime_min", "certification", "kw_*",
     "is_english", "original_language", "country_*",
