@@ -96,6 +96,9 @@ ASIA = set("AE AF BD BN BT CN HK ID IL IN IQ IR JO JP KG KH KP KR KW KZ LA LB LK
            "MV MY NP OM PH PK PS QA SA SG SY TH TJ TL TM TR TW UZ VN YE".split())
 
 TOP_KEYWORDS = 30
+# Istoricul regizorului/actorilor folosește doar filmele lansate cu cel puțin 6 luni înainte:
+# încasările unui film abia lansat nu sunt încă cunoscute (#49)
+PREV_MIN_GAP = pd.Timedelta(days=182)
 
 # Etichete de ton TMDB: descriu reacția publicului după vizionare → leakage, nu intră în top keywords
 TONE_KEYWORDS = set("""
@@ -519,9 +522,19 @@ def _country_group(code: str) -> str:
     return "other"
 
 
+def recent_prior_count(df: pd.DataFrame) -> int:
+    """Câte filme au un film anterior al regizorului lansat cu mai puțin de PREV_MIN_GAP înainte."""
+    dates = defaultdict(list)
+    for people, date in zip(df["director_ids"], df["release_date"]):
+        for p in _as_list(people):
+            dates[p].append(date)
+    return int(sum(any(date - PREV_MIN_GAP < d < date for p in _as_list(people) for d in dates[p])
+                   for people, date in zip(df["director_ids"], df["release_date"])))
+
+
 def prev_history(df: pd.DataFrame, col: str, prefix: str, threshold: float) -> pd.DataFrame:
     """Pentru fiecare film și fiecare persoană din `col`: filmele din dataset ale
-    persoanei lansate strict înainte. Statisticile se calculează per persoană și
+    persoanei lansate cu cel puțin PREV_MIN_GAP (6 luni) înainte, când încasările lor erau cunoscute. Statisticile se calculează per persoană și
     apoi se mediază peste persoanele cu istoric:
       {prefix}_prev_films            nr. maxim de filme anterioare
       {prefix}_prev_mean_roi         media ROI (cerută în issue; sensibilă la hituri extreme)
@@ -536,7 +549,7 @@ def prev_history(df: pd.DataFrame, col: str, prefix: str, threshold: float) -> p
     for people, date in zip(df[col], df["release_date"]):
         counts, means, logs, rates = [], [], [], []
         for p in _as_list(people):
-            prior = np.array([r for d, r in films_by_person[p] if d < date])
+            prior = np.array([r for d, r in films_by_person[p] if d <= date - PREV_MIN_GAP])
             counts.append(len(prior))
             if len(prior):
                 means.append(prior.mean())
@@ -1031,7 +1044,7 @@ Media simplă aproape nu are legătură cu ținta; variantele noi au.
 
 ## Fără informații de după lansare (anti-leakage)
 
-- Premiile și istoricul regizorului/actorilor vin doar din filmele lansate **înainte**.
+- Premiile și istoricul regizorului/actorilor vin doar din filmele lansate **înainte**. Pentru istoricul ROI, filmul anterior trebuie lansat cu cel puțin 6 luni înainte (#49): încasările unui film abia lansat nu sunt încă cunoscute. Înainte de această regulă, {_n(stats.get("prev_recent", 0))} filme foloseau ROI-ul unui film al regizorului lansat cu mai puțin de 6 luni în urmă.
 - **Franciza** (#47): colecțiile TMDB se creează după ce apare o continuare, iar continuarea se face de obicei pentru că primul film a avut succes. Cu vechea definiție (`is_franchise` = filmul e într-o colecție), primul film al unei serii ar fi purtat informație din viitor:
 
 {franchise_table}
@@ -1069,6 +1082,7 @@ def main() -> None:
     df = clean(df, funnel, gross_only=count_gross_only(df.index), roi_rule=args.roi_rule,
                budget_choice=args.budget_choice, stats=stats)
     stats["franchise"] = franchise_stats(df, args.threshold)
+    stats["prev_recent"] = recent_prior_count(df)
     stats["gross_currency"] = df["_gross_currency"].reset_index(drop=True)
     stats["keywords"] = keyword_stats(df, args.threshold)
     out = features(df, args.threshold)

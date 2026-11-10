@@ -273,8 +273,8 @@ La predicție, pentru un film care nu a fost încă lansat, nu știm câte surse
 | `runtime_min` | 33 | 0,2% |
 | `certification` | 7.443 | 41,7% |
 | `sequel_number` | 13 | 0,1% |
-| `director_prev_mean_roi` | 7.407 | 41,5% |
-| `cast_prev_mean_roi` | 2.779 | 15,6% |
+| `director_prev_mean_roi` | 7.490 | 41,9% |
+| `cast_prev_mean_roi` | 2.924 | 16,4% |
 
 Istoricul regizorului și al actorilor lipsește când e primul lor film din dataset.
 
@@ -287,18 +287,18 @@ Câteva filme au un ROI uriaș (Paranormal Activity: 12.947), deși la jumătate
 
 | Coloană | Corelație cu `profitable` |
 |---|---|
-| `director_prev_mean_roi` | 0,029 |
-| `director_prev_mean_log_roi` | 0,202 |
-| `director_prev_profitable_rate` | 0,189 |
-| `cast_prev_mean_roi` | 0,033 |
-| `cast_prev_mean_log_roi` | 0,186 |
-| `cast_prev_profitable_rate` | 0,179 |
+| `director_prev_mean_roi` | 0,028 |
+| `director_prev_mean_log_roi` | 0,201 |
+| `director_prev_profitable_rate` | 0,186 |
+| `cast_prev_mean_roi` | 0,034 |
+| `cast_prev_mean_log_roi` | 0,187 |
+| `cast_prev_profitable_rate` | 0,178 |
 
 Media simplă aproape nu are legătură cu ținta; variantele noi au.
 
 ## Fără informații de după lansare (anti-leakage)
 
-- Premiile și istoricul regizorului/actorilor vin doar din filmele lansate **înainte**.
+- Premiile și istoricul regizorului/actorilor vin doar din filmele lansate **înainte**. Pentru istoricul ROI, filmul anterior trebuie lansat cu cel puțin 6 luni înainte (#49): încasările unui film abia lansat nu sunt încă cunoscute. Înainte de această regulă, 484 filme foloseau ROI-ul unui film al regizorului lansat cu mai puțin de 6 luni în urmă.
 - **Franciza** (#47): colecțiile TMDB se creează după ce apare o continuare, iar continuarea se face de obicei pentru că primul film a avut succes. Cu vechea definiție (`is_franchise` = filmul e într-o colecție), primul film al unei serii ar fi purtat informație din viitor:
 
   | Vechea definiție | Filme | % profitabile |
