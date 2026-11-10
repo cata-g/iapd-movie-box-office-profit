@@ -129,10 +129,10 @@ Filmele de streaming cu o lansare doar simbolică în cinema ies din populație 
 | `genres`, `genre_*` | genurile TMDB (separate prin `\|`) și one-hot |
 | `runtime_min` | durata în minute (gol = necunoscută) |
 | `certification` | G=0, PG=1, PG-13=2, R=3, NC-17=4 (gol = lipsă / NR) |
-| `kw_*` | one-hot pentru cele mai frecvente 30 de keywords TMDB din dataset, fără etichetele de ton (`amused`, `suspenseful`, … = reacția publicului, leakage) |
+| `kw_*` | one-hot pentru cele mai frecvente 30 de keywords TMDB din dataset, fără etichetele de ton (`amused`, `suspenseful`, … = reacția publicului, leakage) și fără cele care se află abia după lansare (`duringcreditsstinger`, `aftercreditsstinger`, `controversy` …, #47). Atenție: filmele populare au mai multe keywords, deci `kw_*` poartă și un semnal de popularitate (vezi raportul) |
 | `is_english`, `original_language` | limba originală: `en`, top 5 alte limbi sau `other` |
 | `country_{us,europe,asia,other}` | grupul țărilor de producție (un film poate avea mai multe) |
-| `is_franchise`, `sequel_number` | face parte dintr-o colecție TMDB; al câtelea film din colecție (0 = nu e în colecție) |
+| `is_franchise`, `sequel_number` | continuare: au apărut deja filme din aceeași colecție TMDB; câte (0 = primul film al seriei sau film independent). Primul film al unei serii nu contează ca franciză: colecția apare abia după ce succesul lui aduce o continuare (leakage, #47) |
 | `is_adaptation`, `adaptation_type` | ecranizare (Wikidata P144, keywords „based on …” sau `based on` din infobox); tipul sursei din Wikidata, `other` dacă e ecranizare fără tip cunoscut, `none` altfel |
 | `director_prev_films` | nr. de filme anterioare din dataset ale regizorului |
 | `director_prev_mean_roi` | ROI-ul mediu al acelor filme (gol = fără istoric); sensibil la un singur hit extrem |
@@ -140,7 +140,7 @@ Filmele de streaming cu o lansare doar simbolică în cinema ies din populație 
 | `director_prev_profitable_rate` | fracția acelor filme cu ROI ≥ prag; variantă robustă |
 | `cast_prev_*` | aceleași patru coloane pentru primii 3 actori (maxim de filme; celelalte calculate per actor și mediate) |
 
-**Surse, monede și calitatea datelor (META, nu intră în model):** `budget_source` / `gross_source` (sursa valorii finale), `*_n_sources` (câte surse au valoare), `*_n_agree` (câte surse independente sunt la ±25% de valoarea finală; DBpedia și Wikipedia contează o dată), `*_conflict` (max/min > 1,25), valorile brute în USD `budget_tmdb`, `budget_dbp`, `budget_wd`, `budget_wp`, `gross_wp`, `worldwide_gross_dbp`, `gross_wd`, `revenue_tmdb`, sumele în moneda lor `budget_<src>_amount` / `budget_<src>_currency` și `gross_<src>_amount` / `gross_<src>_currency` (`src` = tmdb, dbp, wd, wp), `roi_currency`, `fx_year`, `budget_fx_rate`, `gross_fx_rate` (cursul folosit; 1 = USD, gol = suma în USD din infobox), `budget_is_range` (bugetul final e mijlocul unui interval din infobox). Ele prezic ținta (vezi raportul), deci ar fi leakage.
+**Surse, monede și calitatea datelor (META, nu intră în model):** `budget_source` / `gross_source` (sursa valorii finale), `*_n_sources` (câte surse au valoare), `*_n_agree` (câte surse independente sunt la ±25% de valoarea finală; DBpedia și Wikipedia contează o dată), `*_conflict` (max/min > 1,25), valorile brute în USD `budget_tmdb`, `budget_dbp`, `budget_wd`, `budget_wp`, `gross_wp`, `worldwide_gross_dbp`, `gross_wd`, `revenue_tmdb`, sumele în moneda lor `budget_<src>_amount` / `budget_<src>_currency` și `gross_<src>_amount` / `gross_<src>_currency` (`src` = tmdb, dbp, wd, wp), `roi_currency`, `fx_year`, `budget_fx_rate`, `gross_fx_rate` (cursul folosit; 1 = USD, gol = suma în USD din infobox), `budget_is_range` (bugetul final e mijlocul unui interval din infobox), `gross_is_domestic` / `gross_is_rental` (încasările alese sunt doar SUA/Canada, respectiv „rentals”: ROI subestimat, mai ales la filmele vechi, #47). Ele prezic ținta (vezi raportul), deci ar fi leakage.
 
 **Doar pentru experimentul leakage vs. no-leakage:** `vote_average`, `vote_count`.
 

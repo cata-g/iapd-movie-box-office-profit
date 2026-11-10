@@ -33,7 +33,7 @@ META = [
     # suma în moneda ei, moneda ROI-ului și cursul folosit
     "*_amount", "*_currency", "fx_year", "*_fx_rate",
     # calitatea datelor
-    "budget_is_range",
+    "budget_is_range", "gross_is_domestic", "gross_is_rental",
 ]
 
 LEAKAGE = ["vote_average", "vote_count"]

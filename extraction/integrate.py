@@ -111,6 +111,10 @@ pessimistic playful powerful provocative reflective regretful relaxed respectful
 sarcastic satirical sentimental serious shocking sincere skeptical somber suspenseful
 sympathetic tense thoughtful tragic vibrant whimsical witty zealous
 """.split()) | {"mean spirited"}
+# Etichete care se află abia după lansare (#47): scenele de după generic se descoperă la
+# vizionare, iar „controversă” / „film interzis” descriu reacția de după lansare
+POST_RELEASE_KEYWORDS = {"duringcreditsstinger", "aftercreditsstinger", "post-credits scene",
+                         "mid-credits scene", "banned film", "controversy", "cult film", "box office flop"}
 TOP_LANGUAGES = 5
 
 
@@ -158,6 +162,7 @@ def load_sources(manifest: dict) -> pd.DataFrame:
                      "gross_wd_currency", "is_adaptation", "adaptation_type"]])
     df = df.join(wp[["budget_wp", "gross_wp", "budget_wp_amount", "budget_wp_currency", "budget_wp_note",
                      "budget_wp_range", "gross_wp_amount", "gross_wp_currency", "gross_wp_note",
+                     "gross_wp_domestic", "gross_wp_rental",
                      "based_on_wp", "distributor_wp"]])
     df = df.join(aw)
     df = df.merge(rd[["tmdb_id", "first_theatrical", "first_digital"]], on="tmdb_id", how="left").set_index(df.index)
@@ -437,6 +442,15 @@ def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "
         ~same, chosen("gross", "amount").astype(float) / chosen("budget", "amount").astype(float))
     df["roi_currency"] = b_cur.where(same, "USD")
 
+    # Calitatea țintei (#47): încasările alese sunt doar SUA/Canada sau „rentals” (partea
+    # distribuitorului) după eticheta din infobox. Se aplică și când a câștigat DBpedia cu
+    # aceeași sumă (DBpedia copiază infobox-ul).
+    from_infobox = (df["gross_source"] == "wikipedia") | (
+        (df["gross_source"] == "dbpedia")
+        & ((df["gross_dbp_amount"] - df["gross_wp_amount"]).abs() <= DBP_SAME_AMOUNT * df["gross_wp_amount"]))
+    df["gross_is_domestic"] = from_infobox & df["gross_wp_domestic"].fillna(False).astype(bool)
+    df["gross_is_rental"] = from_infobox & df["gross_wp_rental"].fillna(False).astype(bool)
+
     df["release_date"] = pd.to_datetime(df["release_date"], errors="coerce")
     step("dată lansare", df["release_date"].notna(),
          "fără dată de lansare în TMDB")
@@ -523,6 +537,38 @@ def prev_history(df: pd.DataFrame, col: str, prefix: str, threshold: float) -> p
     return pd.DataFrame(rows, index=df.index)
 
 
+def franchise_features(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """(is_franchise, sequel_number) știute înainte de lansare: câte filme din aceeași colecție
+    TMDB au apărut înainte (0 = primul film sau film independent; gol = poziție necunoscută)."""
+    coll = pd.to_numeric(df["collection_id"], errors="coerce").fillna(0)
+    pos = pd.to_numeric(df["sequel_number"], errors="coerce")
+    prior = (pos - 1).clip(lower=0).where(coll > 0, 0)
+    return (prior >= 1).astype(int), prior.astype("Int64")
+
+
+def keyword_stats(df: pd.DataFrame, threshold: float) -> dict:
+    """Cât de mult țin keywords de popularitate (pentru raport)."""
+    kws = df["keywords"].apply(lambda k: [w.strip().lower() for w in _as_list(k)])
+    n_kw = kws.apply(len)
+    votes = np.log1p(pd.to_numeric(df["vote_count"], errors="coerce").fillna(0))
+    prof = df["roi"] >= threshold
+    stingers = kws.apply(lambda ws: any(w in ("duringcreditsstinger", "aftercreditsstinger") for w in ws))
+    return {"corr_votes": float(np.corrcoef(n_kw, votes)[0, 1]),
+            "corr_profitable": float(np.corrcoef(n_kw, prof)[0, 1]),
+            "none": (int((n_kw == 0).sum()), float(prof[n_kw == 0].mean())),
+            "stingers": (int(stingers.sum()), float(prof[stingers].mean()))}
+
+
+def franchise_stats(df: pd.DataFrame, threshold: float) -> dict:
+    """% profitabile după vechea definiție (orice film dintr-o colecție), pentru raport."""
+    coll = pd.to_numeric(df["collection_id"], errors="coerce").fillna(0) > 0
+    pos = pd.to_numeric(df["sequel_number"], errors="coerce")
+    prof = df["roi"] >= threshold
+    groups = {"nu e în nicio colecție": ~coll, "primul film dintr-o colecție": coll & (pos == 1),
+              "continuare (au apărut deja filme din serie)": coll & (pos >= 2)}
+    return {k: (int(m.sum()), float(prof[m].mean())) for k, m in groups.items()}
+
+
 def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     out["tmdb_id"] = df["tmdb_id"].astype("Int64")
@@ -568,9 +614,11 @@ def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
     cert = df["certification_us"].astype("string").str.strip().str.upper()
     out["certification"] = cert.map(CERTIFICATION).astype("Int64")
 
-    # 10. Cele mai frecvente keywords (one-hot), fără etichetele de ton (reacția publicului)
+    # 10. Cele mai frecvente keywords (one-hot), fără etichetele de ton (reacția publicului) și
+    # fără cele care se află abia după lansare
     kws = df["keywords"].apply(lambda k: [w.strip().lower() for w in _as_list(k)])
-    top = pd.Series([w for ws in kws for w in set(ws) if w not in TONE_KEYWORDS]).value_counts()
+    skip = TONE_KEYWORDS | POST_RELEASE_KEYWORDS
+    top = pd.Series([w for ws in kws for w in set(ws) if w not in skip]).value_counts()
     top = sorted(top.head(TOP_KEYWORDS).items(), key=lambda kv: (-kv[1], kv[0]))
     for w, _ in top:
         out[f"kw_{_slug(w)}"] = kws.apply(lambda ws, w=w: int(w in ws))
@@ -586,11 +634,11 @@ def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
     for g in ("us", "europe", "asia", "other"):
         out[f"country_{g}"] = groups.apply(lambda s, g=g: int(g in s))
 
-    # 13–14. Franciză și numărul în serie
-    coll = pd.to_numeric(df["collection_id"], errors="coerce").fillna(0)
-    out["is_franchise"] = (coll > 0).astype(int)
-    seq = pd.to_numeric(df["sequel_number"], errors="coerce")
-    out["sequel_number"] = seq.where(seq.notna() | (coll > 0), 0).astype("Int64")
+    # 13–14. Franciză și numărul în serie. Colecțiile TMDB apar după ce se face o continuare, iar
+    # continuarea se face de obicei pentru că primul film a avut succes: pentru primul film,
+    # „e într-o colecție” e informație din viitor (#47). Contează doar filmele din serie lansate
+    # ÎNAINTE: sequel_number = poziția în colecție (după data lansării) - 1.
+    out["is_franchise"], out["sequel_number"] = franchise_features(df)
 
     # 15. Ecranizare
     kw_based = kws.apply(lambda ws: any(w.startswith("based on") for w in ws))
@@ -621,6 +669,8 @@ def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
             out[f"{kind}_{p}_amount"] = df[f"{kind}_{p}_amount"].round(2)
             out[f"{kind}_{p}_currency"] = df[f"{kind}_{p}_currency"]
     out["roi_currency"] = df["roi_currency"]
+    out["gross_is_domestic"] = df["gross_is_domestic"].astype(int)
+    out["gross_is_rental"] = df["gross_is_rental"].astype(int)
     # Calitatea datelor: bugetul final e mijlocul unui interval din infobox („$10–15 million”)
     wp = pd.to_numeric(df["budget_wp"], errors="coerce")
     out["budget_is_range"] = (df["budget_wp_range"].fillna(False).astype(bool)
@@ -820,6 +870,32 @@ Filmele scoase sunt mult mai mici și mai puțin cunoscute (mai puține voturi, 
 """
 
 
+def target_quality_section(out: pd.DataFrame) -> str:
+    dom, ren = out["gross_is_domestic"] == 1, out["gross_is_rental"] == 1
+    either = dom | ren
+    decade = (out["release_year"] // 10 * 10).astype(int)
+    rows = []
+    for d, g in out.groupby(decade):
+        e = either[g.index]
+        rows.append({"Deceniu": f"{d}–{min(d + 9, YEAR_MAX)}", "Filme": int(len(g)),
+                     "Doar SUA/Canada": int(dom[g.index].sum()), "Rentals": int(ren[g.index].sum()),
+                     "% din deceniu": _pct(e.mean()),
+                     "% profitabile (cu ele / fără ele)": f"{_pct(g['profitable'].mean())} / "
+                                                          f"{_pct(g.loc[~e, 'profitable'].mean())}"})
+    return f"""## Calitatea țintei: încasări doar SUA/Canada sau „rentals”
+
+Ținta presupune încasări **mondiale**. La unele filme, singura cifră din infobox e alta:
+- `gross_is_domestic` = 1: încasări doar în SUA/Canada, fără cifră mondială ({_n(int(dom.sum()))} filme, {_pct(out.loc[dom, "profitable"].mean())} profitabile);
+- `gross_is_rental` = 1: „rentals”, adică partea care revine distribuitorului, cam jumătate din încasări ({_n(int(ren.sum()))} filme, {_pct(out.loc[ren, "profitable"].mean())} profitabile).
+
+La aceste filme, ROI-ul e **subestimat**, deci unele sunt etichetate greșit ca neprofitabile. Sunt concentrate în filmele vechi:
+
+{_md_table(rows)}
+
+Sunt coloane META (nu intră în model). `extraction/sensitivity.py` arată ținta și fără aceste filme. Pentru antrenare, varianta cea mai sigură e să le scoatem sau să le dăm o pondere mai mică.
+"""
+
+
 def write_report(out: pd.DataFrame, funnel: list, args, stats: dict = None) -> None:
     threshold = args.threshold
     stats = stats or {}
@@ -841,6 +917,10 @@ def write_report(out: pd.DataFrame, funnel: list, args, stats: dict = None) -> N
                                 "director_prev_profitable_rate", "cast_prev_mean_roi",
                                 "cast_prev_mean_log_roi", "cast_prev_profitable_rate"]])
     budget_rule = "" if args.budget_choice == "prioritate" else f""", dar prin **majoritate**: din fiecare grup independent (tmdb, wikidata, wiki = dbpedia/wikipedia) intră o singură valoare, a sursei celei mai prioritare din grup. Câștigă valoarea cu care sunt de acord (la ±25%) cele mai multe grupuri; la egalitate rămâne ordinea de mai sus. Așa, o greșeală izolată a TMDB nu mai câștigă doar pentru că TMDB e primul (Dragon Ball Super: Broly: TMDB 1 mil. $, Wikidata și Wikipedia 8,5 mil. $). Limită: Wikidata are exact aceeași valoare ca Wikipedia la {_same_share(out, "budget_wd", "budget_wp")} din bugete, deci și „majoritatea” poate fi uneori aceeași informație copiată."""
+    kw = stats.get("keywords", {"corr_votes": 0, "corr_profitable": 0, "none": (0, 0), "stingers": (0, 0)})
+    franchise_table = "\n".join(
+        ["  | Vechea definiție | Filme | % profitabile |", "  |---|---|---|"]
+        + [f"  | {k} | {_n(v[0])} | {_pct(v[1])} |" for k, v in stats.get("franchise", {}).items()])
     final_src = _md_table([{"Sursă": k, "Buget": int((out["budget_source"] == k).sum()),
                             "Încasări": int((out["gross_source"] == k).sum())} for k in BUDGET_SOURCES])
 
@@ -856,6 +936,7 @@ Generat cu `python extraction/integrate.py --threshold {threshold} --roi-rule {a
 
 {streaming_section(stats)}
 {dropped_section(out, stats)}
+{target_quality_section(out)}
 ## Ținta
 
 Un film e **profitabil** dacă încasările sunt de cel puțin {t} ori bugetul (`roi = încasări / buget`).
@@ -916,7 +997,14 @@ Media simplă aproape nu are legătură cu ținta; variantele noi au.
 ## Fără informații de după lansare (anti-leakage)
 
 - Premiile și istoricul regizorului/actorilor vin doar din filmele lansate **înainte**.
+- **Franciza** (#47): colecțiile TMDB se creează după ce apare o continuare, iar continuarea se face de obicei pentru că primul film a avut succes. Cu vechea definiție (`is_franchise` = filmul e într-o colecție), primul film al unei serii ar fi purtat informație din viitor:
+
+{franchise_table}
+
+  Acum `is_franchise` = 1 doar pentru continuări, iar `sequel_number` = câte filme din serie au apărut înainte (0 = primul film sau film independent).
 - Am scos keywords ca `amused` sau `suspenseful`: arată cum a reacționat publicul, deci nu se știu înainte de lansare.
+- **Keywords de după lansare** (#47): `duringcreditsstinger` / `aftercreditsstinger` (scenă după generic) se află abia la vizionare și anunțau succesul ({_n(kw["stingers"][0])} filme, {_pct(kw["stingers"][1])} profitabile). Le-am scos, împreună cu `controversy`, `banned film` și altele asemănătoare.
+- **Limită rămasă:** keywords sunt adăugate de utilizatorii TMDB, după lansare. Filmele populare primesc mai multe: numărul de keywords se corelează {f"{kw['corr_votes']:.2f}".replace(".", ",")} cu log(voturi) și {f"{kw['corr_profitable']:.2f}".replace(".", ",")} cu `profitable`, iar cele {_n(kw["none"][0])} filme fără niciun keyword au doar {_pct(kw["none"][1])} profitabile. Chiar dacă fiecare keyword descrie conținutul, un vector `kw_*` plin de zerouri spune „film puțin cunoscut”. În experimentul cu leakage, merită comparat modelul cu și fără `kw_*`.
 - `vote_average` și `vote_count` rămân în tabel doar pentru experimentul cu leakage.
 - La antrenare, e mai sigur să împărțim filmele după an (vechi = antrenare, noi = test). La o împărțire aleatoare, istoricul unui film vechi ar putea folosi ROI-ul unui film din test.
 """
@@ -945,6 +1033,8 @@ def main() -> None:
              "wp_ambiguous_gross": int((df["gross_wp_note"] == "ambiguous").sum())}
     df = clean(df, funnel, gross_only=count_gross_only(df.index), roi_rule=args.roi_rule,
                budget_choice=args.budget_choice, stats=stats)
+    stats["franchise"] = franchise_stats(df, args.threshold)
+    stats["keywords"] = keyword_stats(df, args.threshold)
     out = features(df, args.threshold)
 
     PROCESSED.mkdir(parents=True, exist_ok=True)

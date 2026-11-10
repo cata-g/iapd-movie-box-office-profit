@@ -63,6 +63,27 @@ Cea mai mare pierdere din pâlnie e pasul „încasări”: filme cu buget, dar 
 
 Filmele scoase sunt mult mai mici și mai puțin cunoscute (mai puține voturi, buget mai mic, mai puține producții americane). Încasările lor nu apar nicăieri tocmai pentru că au fost mici, deci ele sunt, foarte probabil, mai des neprofitabile. Rata de 32,2% filme profitabile e deci **supraestimată** față de toate filmele lansate în cinema: descrie filmele destul de cunoscute ca să le găsim încasările, iar modelul va învăța pe această populație.
 
+## Calitatea țintei: încasări doar SUA/Canada sau „rentals”
+
+Ținta presupune încasări **mondiale**. La unele filme, singura cifră din infobox e alta:
+- `gross_is_domestic` = 1: încasări doar în SUA/Canada, fără cifră mondială (1.036 filme, 22,8% profitabile);
+- `gross_is_rental` = 1: „rentals”, adică partea care revine distribuitorului, cam jumătate din încasări (456 filme, 26,5% profitabile).
+
+La aceste filme, ROI-ul e **subestimat**, deci unele sunt etichetate greșit ca neprofitabile. Sunt concentrate în filmele vechi:
+
+| Deceniu | Filme | Doar SUA/Canada | Rentals | % din deceniu | % profitabile (cu ele / fără ele) |
+|---|---|---|---|---|---|
+| 1950–1959 | 774 | 222 | 192 | 33,3% | 33,6% / 35,9% |
+| 1960–1969 | 594 | 185 | 141 | 38,4% | 42,1% / 54,1% |
+| 1970–1979 | 862 | 131 | 109 | 20,4% | 56,7% / 61,7% |
+| 1980–1989 | 1.778 | 224 | 12 | 13,2% | 33,4% / 34,6% |
+| 1990–1999 | 2.428 | 192 | 0 | 7,9% | 29,9% / 31,8% |
+| 2000–2009 | 4.352 | 34 | 0 | 0,8% | 27,9% / 28,0% |
+| 2010–2019 | 5.560 | 42 | 2 | 0,8% | 32,9% / 33,0% |
+| 2020–2024 | 1.563 | 6 | 0 | 0,4% | 25,5% / 25,3% |
+
+Sunt coloane META (nu intră în model). `extraction/sensitivity.py` arată ținta și fără aceste filme. Pentru antrenare, varianta cea mai sigură e să le scoatem sau să le dăm o pondere mai mică.
+
 ## Ținta
 
 Un film e **profitabil** dacă încasările sunt de cel puțin 2,5 ori bugetul (`roi = încasări / buget`).
@@ -167,7 +188,7 @@ Față de `major_studio`, 2.351 filme trec în clasa „mare studio” doar prin
 
 ## De ce excludem coloanele META
 
-`extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; în model intră doar cele 79 din FEATURES (`feature_columns(df)`), iar `extraction/test_columns.py` verifică asta pe CSV. META sunt cele 37 coloane despre **date**, nu despre film: sursa valorii, câte surse au o valoare și câte sunt de acord, sumele brute, monedele și cursurile. Ele prezic ținta, pentru că un film cu încasări raportate peste tot e de obicei un film cunoscut, care a mers bine:
+`extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; în model intră doar cele 79 din FEATURES (`feature_columns(df)`), iar `extraction/test_columns.py` verifică asta pe CSV. META sunt cele 39 coloane despre **date**, nu despre film: sursa valorii, câte surse au o valoare și câte sunt de acord, sumele brute, monedele și cursurile. Ele prezic ținta, pentru că un film cu încasări raportate peste tot e de obicei un film cunoscut, care a mers bine:
 
 **% profitabile după numărul de surse cu încasări**
 
@@ -217,6 +238,7 @@ Față de `major_studio`, 2.351 filme trec în clasa „mare studio” doar prin
 | `budget_dbp` | 0,061 |
 | `budget_is_range` | 0,056 |
 | `budget_dbp_amount` | 0,056 |
+| `gross_is_domestic` | -0,050 |
 | `budget_tmdb_amount` | 0,047 |
 | `budget_tmdb` | 0,047 |
 | `budget_conflict` | 0,045 |
@@ -224,6 +246,7 @@ Față de `major_studio`, 2.351 filme trec în clasa „mare studio” doar prin
 | `gross_conflict` | 0,035 |
 | `gross_wp_amount` | 0,024 |
 | `budget_fx_rate` | 0,021 |
+| `gross_is_rental` | -0,020 |
 | `budget_wp_amount` | 0,005 |
 | `budget_wd_amount` | -0,003 |
 
@@ -262,6 +285,17 @@ Media simplă aproape nu are legătură cu ținta; variantele noi au.
 ## Fără informații de după lansare (anti-leakage)
 
 - Premiile și istoricul regizorului/actorilor vin doar din filmele lansate **înainte**.
+- **Franciza** (#47): colecțiile TMDB se creează după ce apare o continuare, iar continuarea se face de obicei pentru că primul film a avut succes. Cu vechea definiție (`is_franchise` = filmul e într-o colecție), primul film al unei serii ar fi purtat informație din viitor:
+
+  | Vechea definiție | Filme | % profitabile |
+  |---|---|---|
+  | nu e în nicio colecție | 14.643 | 26,1% |
+  | primul film dintr-o colecție | 1.653 | 65,5% |
+  | continuare (au apărut deja filme din serie) | 1.602 | 53,3% |
+
+  Acum `is_franchise` = 1 doar pentru continuări, iar `sequel_number` = câte filme din serie au apărut înainte (0 = primul film sau film independent).
 - Am scos keywords ca `amused` sau `suspenseful`: arată cum a reacționat publicul, deci nu se știu înainte de lansare.
+- **Keywords de după lansare** (#47): `duringcreditsstinger` / `aftercreditsstinger` (scenă după generic) se află abia la vizionare și anunțau succesul (774 filme, 55,0% profitabile). Le-am scos, împreună cu `controversy`, `banned film` și altele asemănătoare.
+- **Limită rămasă:** keywords sunt adăugate de utilizatorii TMDB, după lansare. Filmele populare primesc mai multe: numărul de keywords se corelează 0,62 cu log(voturi) și 0,22 cu `profitable`, iar cele 2.611 filme fără niciun keyword au doar 23,8% profitabile. Chiar dacă fiecare keyword descrie conținutul, un vector `kw_*` plin de zerouri spune „film puțin cunoscut”. În experimentul cu leakage, merită comparat modelul cu și fără `kw_*`.
 - `vote_average` și `vote_count` rămân în tabel doar pentru experimentul cu leakage.
 - La antrenare, e mai sigur să împărțim filmele după an (vechi = antrenare, noi = test). La o împărțire aleatoare, istoricul unui film vechi ar putea folosi ROI-ul unui film din test.
