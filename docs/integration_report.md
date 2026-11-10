@@ -63,26 +63,37 @@ Cea mai mare pierdere din pâlnie e pasul „încasări”: filme cu buget, dar 
 
 Filmele scoase sunt mult mai mici și mai puțin cunoscute (mai puține voturi, buget mai mic, mai puține producții americane). Încasările lor nu apar nicăieri tocmai pentru că au fost mici, deci ele sunt, foarte probabil, mai des neprofitabile. Rata de 32,2% filme profitabile e deci **supraestimată** față de toate filmele lansate în cinema: descrie filmele destul de cunoscute ca să le găsim încasările, iar modelul va învăța pe această populație.
 
-## Calitatea țintei: încasări doar SUA/Canada sau „rentals”
+## Calitatea țintei: încasări parțiale
 
-Ținta presupune încasări **mondiale**. La unele filme, singura cifră din infobox e alta:
-- `gross_is_domestic` = 1: încasări doar în SUA/Canada, fără cifră mondială (1.036 filme, 22,8% profitabile);
-- `gross_is_rental` = 1: „rentals”, adică partea care revine distribuitorului, cam jumătate din încasări (456 filme, 26,5% profitabile).
+Ținta presupune încasări **mondiale**. La unele filme, singura cifră din infobox e alta (coloane META, nu intră în model):
+- `gross_is_single_market` = 1: încasările unei singure piețe, după eticheta din infobox („$12 million (U.S.)”, „£49,981 (UK)”, „A$3.2 million (Australia)”): 1.414 filme, 22,1% profitabile. `gross_is_domestic` = 1 e cazul SUA/Canada (1.036 filme).
+- `gross_is_rental` = 1: „rentals”, adică partea care revine distribuitorului, cam jumătate din încasări: 456 filme, 26,5% profitabile.
+- `gross_is_local_currency` = 1 (mai slab): încasări în altă monedă decât USD, fără etichetă de piață și fără „worldwide”. De obicei sunt doar cele de acasă, dar nu e sigur: 2.798 filme, 35,2% profitabile.
 
-La aceste filme, ROI-ul e **subestimat**, deci unele sunt etichetate greșit ca neprofitabile. Sunt concentrate în filmele vechi:
+La aceste filme, ROI-ul e **subestimat**, deci unele sunt etichetate greșit ca neprofitabile. Încasările parțiale (o singură piață sau rentals) sunt concentrate în filmele vechi:
 
-| Deceniu | Filme | Doar SUA/Canada | Rentals | % din deceniu | % profitabile (cu ele / fără ele) |
+| Deceniu | Filme | O singură piață | Rentals | % din deceniu | % profitabile (cu ele / fără ele) |
 |---|---|---|---|---|---|
-| 1950–1959 | 774 | 222 | 192 | 33,3% | 33,6% / 35,9% |
-| 1960–1969 | 594 | 185 | 141 | 38,4% | 42,1% / 54,1% |
-| 1970–1979 | 862 | 131 | 109 | 20,4% | 56,7% / 61,7% |
-| 1980–1989 | 1.778 | 224 | 12 | 13,2% | 33,4% / 34,6% |
-| 1990–1999 | 2.428 | 192 | 0 | 7,9% | 29,9% / 31,8% |
-| 2000–2009 | 4.352 | 34 | 0 | 0,8% | 27,9% / 28,0% |
-| 2010–2019 | 5.560 | 42 | 2 | 0,8% | 32,9% / 33,0% |
-| 2020–2024 | 1.563 | 6 | 0 | 0,4% | 25,5% / 25,3% |
+| 1950–1959 | 774 | 223 | 192 | 33,5% | 33,6% / 35,9% |
+| 1960–1969 | 594 | 200 | 141 | 40,4% | 42,1% / 54,0% |
+| 1970–1979 | 862 | 187 | 109 | 26,6% | 56,7% / 63,5% |
+| 1980–1989 | 1.778 | 329 | 12 | 19,1% | 33,4% / 36,0% |
+| 1990–1999 | 2.428 | 285 | 0 | 11,7% | 29,9% / 32,8% |
+| 2000–2009 | 4.352 | 76 | 0 | 1,7% | 27,9% / 28,2% |
+| 2010–2019 | 5.560 | 101 | 2 | 1,8% | 32,9% / 33,1% |
+| 2020–2024 | 1.563 | 13 | 0 | 0,8% | 25,5% / 25,2% |
 
-Sunt coloane META (nu intră în model). `extraction/sensitivity.py` arată ținta și fără aceste filme. Pentru antrenare, varianta cea mai sigură e să le scoatem sau să le dăm o pondere mai mică.
+Sumele în moneda locală afectează filmele din afara SUA. Fără o corecție, un model ar învăța că filmele non-americane eșuează, iar asta ar veni din date, nu din realitate. Tabelul arată filmele și % profitabile pentru fiecare categorie (procentul apare de la 30 de filme în sus):
+
+| Moneda încasărilor | o singură piață / rentals | monedă locală fără „worldwide” | restul |
+|---|---|---|---|
+| USD | 1.156 filme, 24,2% | 0 filme | 13.546 filme, 32,5% |
+| INR | 17 filme | 1.570 filme, 43,2% | 7 filme |
+| alte monede | 371 filme, 21,6% | 1.224 filme, 24,9% | 20 filme |
+
+Filmele cu încasări în alte monede (fără USD și INR) sunt profitabile mult mai rar decât filmele în USD fără semnale, ceea ce confirmă că suma lor e de obicei doar cea de acasă. Filmele indiene (INR) merg în sens invers. Infobox-urile lor dau de regulă încasările mondiale, adesea anunțate de producători și cu taxe incluse, deci probabil umflate. Același semnal (monedă locală fără „worldwide”) are așadar sensuri diferite pentru cele două grupuri.
+
+`extraction/sensitivity.py` arată ținta și fără aceste filme. Pentru antrenare, varianta cea mai sigură e să le scoatem sau să le dăm o pondere mai mică, iar concluziile despre țară sau limbă trebuie verificate și fără ele.
 
 ## Ținta
 
@@ -188,7 +199,7 @@ Față de `major_studio`, 2.351 filme trec în clasa „mare studio” doar prin
 
 ## De ce excludem coloanele META
 
-`extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; în model intră doar cele 79 din FEATURES (`feature_columns(df)`), iar `extraction/test_columns.py` verifică asta pe CSV. META sunt cele 39 coloane despre **date**, nu despre film: sursa valorii, câte surse au o valoare și câte sunt de acord, sumele brute, monedele și cursurile. Ele prezic ținta, pentru că un film cu încasări raportate peste tot e de obicei un film cunoscut, care a mers bine:
+`extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; în model intră doar cele 79 din FEATURES (`feature_columns(df)`), iar `extraction/test_columns.py` verifică asta pe CSV. META sunt cele 41 coloane despre **date**, nu despre film: sursa valorii, câte surse au o valoare și câte sunt de acord, sumele brute, monedele și cursurile. Ele prezic ținta, pentru că un film cu încasări raportate peste tot e de obicei un film cunoscut, care a mers bine:
 
 **% profitabile după numărul de surse cu încasări**
 
@@ -235,6 +246,7 @@ Față de `major_studio`, 2.351 filme trec în clasa „mare studio” doar prin
 | `budget_wd` | 0,083 |
 | `fx_year` | -0,071 |
 | `budget_wp` | 0,065 |
+| `gross_is_single_market` | -0,063 |
 | `budget_dbp` | 0,061 |
 | `budget_is_range` | 0,056 |
 | `budget_dbp_amount` | 0,056 |
@@ -244,6 +256,7 @@ Față de `major_studio`, 2.351 filme trec în clasa „mare studio” doar prin
 | `budget_conflict` | 0,045 |
 | `gross_fx_rate` | 0,041 |
 | `gross_conflict` | 0,035 |
+| `gross_is_local_currency` | 0,028 |
 | `gross_wp_amount` | 0,024 |
 | `budget_fx_rate` | 0,021 |
 | `gross_is_rental` | -0,020 |
