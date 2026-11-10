@@ -98,7 +98,7 @@ Opțiuni:
 
 `sensitivity.py` refolosește aceleași funcții și schimbă pe rând câte o decizie (alegerea bugetului, a încasărilor, `--roi-rule`, pragul 2 / 2,5 / 3), cu numărul de filme, % profitabile și câte etichete se schimbă.
 
-Citește doar `data/interim/` (fără cereri HTTP, câteva secunde) și scrie `data/processed/movies_dataset.csv` (un rând per film) și [docs/integration_report.md](docs/integration_report.md): pâlnia de curățare (inclusiv filmele fără buget și cele de streaming), monedele, profilul filmelor scoase, marile studiouri și de ce excludem coloanele META.
+Citește doar `data/interim/` (fără cereri HTTP, câteva secunde) și scrie `data/processed/movies_dataset.parquet` (un rând per film; datele se păstrează doar în parquet) și [docs/integration_report.md](docs/integration_report.md): pâlnia de curățare (inclusiv filmele fără buget și cele de streaming), monedele, profilul filmelor scoase, marile studiouri și de ce excludem coloanele META.
 
 Filmele de streaming cu o lansare doar simbolică în cinema ies din populație (pasul „streaming”): distribuitor de streaming sau lansare digitală la cel mult 30 de zile după cinema, **și** încasări sub 5% din buget.
 

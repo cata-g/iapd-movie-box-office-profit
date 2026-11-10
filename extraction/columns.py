@@ -1,5 +1,5 @@
 """
-Categoriile coloanelor din data/processed/movies_dataset.csv (#45).
+Categoriile coloanelor din data/processed/movies_dataset.parquet (#45).
 
     from extraction.columns import feature_columns
     X = df[feature_columns(df)]

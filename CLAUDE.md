@@ -15,7 +15,7 @@ Dataseturile gata (Kaggle etc.) **NU sunt permise** — totul se extrage de noi.
 2. **#2** TMDB, **#3** DBpedia, **#4** Wikidata + Wikipedia (independente)
 3. **#5** Manifest + decizia la 10.000 (postează numărătoarea ca comentariu, oprește-te dacă < 10k)
 4. ~~**#6** Box Office Mojo~~ — închis, nu se folosește (vezi mai jos)
-5. **#27** Integrare și curățare → `data/processed/movies_dataset.csv`
+5. **#27** Integrare și curățare → `data/processed/movies_dataset.parquet`
 
 ### Surse pentru buget (resursă rară — reuniune)
 TMDB → DBpedia → Wikidata → Wikipedia
