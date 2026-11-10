@@ -6,8 +6,8 @@ Predicția profitabilității filmelor lansate în cinema folosind **doar date d
 - Ținta continuă: `roi = worldwide_gross / budget`
 - Repo: https://github.com/cata-g/iapd-movie-box-office-profit
 
-## Faza 1 – Dataset propriu (10.000+ filme)
-Dataset cu buget ȘI încasări mondiale în USD + 18 caracteristici fără leakage.
+## Faza 1 – Dataset propriu (17.911 filme; pragul cerut era 10.000)
+Dataset cu buget ȘI încasări mondiale (convertite în USD) + 18 caracteristici fără leakage. Cifrele curente: `docs/integration_report.md`.
 Dataseturile gata (Kaggle etc.) **NU sunt permise** — totul se extrage de noi.
 
 ### Ordinea issue-urilor
