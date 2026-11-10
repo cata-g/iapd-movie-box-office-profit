@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from extraction.wikipedia import infobox_field, parse_money, parse_names
+from extraction.wikipedia import gross_scope, infobox_field, parse_money, parse_names
 
 # raw infobox value -> (amount, currency, is_range, usd)   (usd = suma în USD scrisă în infobox)
 CASES = {
@@ -89,6 +89,22 @@ def test_ambiguous():
     print(f"Test 2 passed: {len(AMBIGUOUS_CASES)} simboluri ambigue rezolvate după țară (sau ignorate).")
 
 
+SCOPE_CASES = {
+    "$1.8 million (US/Canada rentals)": (True, True),
+    "$12 million (U.S.)": (True, False),
+    "$4.25 million (US rentals)<br />$9.25 million (worldwide rentals)": (False, True),
+    "{{Plainlist| * $12 million (U.S.) * $33 million (Worldwide)}}": (False, False),
+    "US$92.2 million": (False, False),          # „US$” e moneda, nu teritoriul
+    "$839 million": (False, False),
+}
+
+
+def test_gross_scope():
+    for raw, expected in SCOPE_CASES.items():
+        assert gross_scope(raw) == expected, f"{raw!r}: expected {expected}, got {gross_scope(raw)}"
+    print(f"Test 5 passed: {len(SCOPE_CASES)} etichete de încasări (doar SUA/Canada, rentals) recunoscute.")
+
+
 def test_infobox_field():
     text = "{{Infobox film\n| name = X\n| budget = $5 million<br />\n (est.)\n| gross = $9 million\n}}"
     assert infobox_field(text, "budget") == "$5 million<br />  (est.)"
@@ -118,4 +134,5 @@ if __name__ == "__main__":
     test_ambiguous()
     test_infobox_field()
     test_parse_names()
+    test_gross_scope()
     print("\nToate testele au trecut.")

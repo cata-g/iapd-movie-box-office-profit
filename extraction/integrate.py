@@ -162,6 +162,7 @@ def load_sources(manifest: dict) -> pd.DataFrame:
                      "gross_wd_currency", "is_adaptation", "adaptation_type"]])
     df = df.join(wp[["budget_wp", "gross_wp", "budget_wp_amount", "budget_wp_currency", "budget_wp_note",
                      "budget_wp_range", "gross_wp_amount", "gross_wp_currency", "gross_wp_note",
+                     "gross_wp_domestic", "gross_wp_rental",
                      "based_on_wp", "distributor_wp"]])
     df = df.join(aw)
     df = df.merge(rd[["tmdb_id", "first_theatrical", "first_digital"]], on="tmdb_id", how="left").set_index(df.index)
@@ -441,6 +442,15 @@ def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "
         ~same, chosen("gross", "amount").astype(float) / chosen("budget", "amount").astype(float))
     df["roi_currency"] = b_cur.where(same, "USD")
 
+    # Calitatea țintei (#47): încasările alese sunt doar SUA/Canada sau „rentals” (partea
+    # distribuitorului) după eticheta din infobox. Se aplică și când a câștigat DBpedia cu
+    # aceeași sumă (DBpedia copiază infobox-ul).
+    from_infobox = (df["gross_source"] == "wikipedia") | (
+        (df["gross_source"] == "dbpedia")
+        & ((df["gross_dbp_amount"] - df["gross_wp_amount"]).abs() <= DBP_SAME_AMOUNT * df["gross_wp_amount"]))
+    df["gross_is_domestic"] = from_infobox & df["gross_wp_domestic"].fillna(False).astype(bool)
+    df["gross_is_rental"] = from_infobox & df["gross_wp_rental"].fillna(False).astype(bool)
+
     df["release_date"] = pd.to_datetime(df["release_date"], errors="coerce")
     step("dată lansare", df["release_date"].notna(),
          "fără dată de lansare în TMDB")
@@ -659,6 +669,8 @@ def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
             out[f"{kind}_{p}_amount"] = df[f"{kind}_{p}_amount"].round(2)
             out[f"{kind}_{p}_currency"] = df[f"{kind}_{p}_currency"]
     out["roi_currency"] = df["roi_currency"]
+    out["gross_is_domestic"] = df["gross_is_domestic"].astype(int)
+    out["gross_is_rental"] = df["gross_is_rental"].astype(int)
     # Calitatea datelor: bugetul final e mijlocul unui interval din infobox („$10–15 million”)
     wp = pd.to_numeric(df["budget_wp"], errors="coerce")
     out["budget_is_range"] = (df["budget_wp_range"].fillna(False).astype(bool)
@@ -858,6 +870,32 @@ Filmele scoase sunt mult mai mici și mai puțin cunoscute (mai puține voturi, 
 """
 
 
+def target_quality_section(out: pd.DataFrame) -> str:
+    dom, ren = out["gross_is_domestic"] == 1, out["gross_is_rental"] == 1
+    either = dom | ren
+    decade = (out["release_year"] // 10 * 10).astype(int)
+    rows = []
+    for d, g in out.groupby(decade):
+        e = either[g.index]
+        rows.append({"Deceniu": f"{d}–{min(d + 9, YEAR_MAX)}", "Filme": int(len(g)),
+                     "Doar SUA/Canada": int(dom[g.index].sum()), "Rentals": int(ren[g.index].sum()),
+                     "% din deceniu": _pct(e.mean()),
+                     "% profitabile (cu ele / fără ele)": f"{_pct(g['profitable'].mean())} / "
+                                                          f"{_pct(g.loc[~e, 'profitable'].mean())}"})
+    return f"""## Calitatea țintei: încasări doar SUA/Canada sau „rentals”
+
+Ținta presupune încasări **mondiale**. La unele filme, singura cifră din infobox e alta:
+- `gross_is_domestic` = 1: încasări doar în SUA/Canada, fără cifră mondială ({_n(int(dom.sum()))} filme, {_pct(out.loc[dom, "profitable"].mean())} profitabile);
+- `gross_is_rental` = 1: „rentals”, adică partea care revine distribuitorului, cam jumătate din încasări ({_n(int(ren.sum()))} filme, {_pct(out.loc[ren, "profitable"].mean())} profitabile).
+
+La aceste filme, ROI-ul e **subestimat**, deci unele sunt etichetate greșit ca neprofitabile. Sunt concentrate în filmele vechi:
+
+{_md_table(rows)}
+
+Sunt coloane META (nu intră în model). `extraction/sensitivity.py` arată ținta și fără aceste filme. Pentru antrenare, varianta cea mai sigură e să le scoatem sau să le dăm o pondere mai mică.
+"""
+
+
 def write_report(out: pd.DataFrame, funnel: list, args, stats: dict = None) -> None:
     threshold = args.threshold
     stats = stats or {}
@@ -898,6 +936,7 @@ Generat cu `python extraction/integrate.py --threshold {threshold} --roi-rule {a
 
 {streaming_section(stats)}
 {dropped_section(out, stats)}
+{target_quality_section(out)}
 ## Ținta
 
 Un film e **profitabil** dacă încasările sunt de cel puțin {t} ori bugetul (`roi = încasări / buget`).

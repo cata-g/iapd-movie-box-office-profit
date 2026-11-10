@@ -238,6 +238,34 @@ def _explicit_usd(rest: str) -> float | None:
     return None
 
 
+def _segment(s: str) -> str:
+    """Într-o listă („JPY 1.5 billion (Japan) ; US$14.7 million (worldwide)”), elementul marcat
+    worldwide / total e cel bun; altfel, tot textul (din care se ia prima sumă)."""
+    for part in s.split(" ; "):
+        if WORLDWIDE.search(part) and _first_money(part):
+            return part
+    return s
+
+
+DOMESTIC = re.compile(r"\b(?:u\.?s\.?a?|united states|domestic|north americ\w*|canada|american)\b", re.I)
+
+
+def gross_scope(raw: str | None) -> tuple[bool, bool]:
+    """(doar SUA/Canada, rentals) pentru suma aleasă de parse_money din câmpul `gross`.
+    „$1.8 million (US/Canada rentals)” -> (True, True); „$33 million (Worldwide)” -> (False, False).
+    Rentals = partea care revine distribuitorului, cam jumătate din încasări (filme vechi)."""
+    if not raw:
+        return False, False
+    s = _segment(clean(raw))
+    m = _first_money(s)
+    if m is None:
+        return False, False
+    after = s[m.end():].split(" ; ")[0]          # eticheta de după sumă: „(US/Canada)”
+    domestic = bool(DOMESTIC.search(after)) and not WORLDWIDE.search(s)
+    rental = "rental" in s.lower()
+    return domestic, rental
+
+
 def parse_money(raw: str | None, countries=()) -> Money:
     """Prima sumă din câmp, în moneda ei: Money(amount, currency, is_range, usd, note).
     `countries` (codurile ISO ale țărilor de producție TMDB) lămuresc simbolurile ambigue:
@@ -245,13 +273,7 @@ def parse_money(raw: str | None, countries=()) -> Money:
     Dacă tot rămâne ambiguu, suma e ignorată (note = "ambiguous")."""
     if not raw:
         return Money(None, None)
-    s = clean(raw)
-    # Într-o listă („JPY 1.5 billion (Japan) ; US$14.7 million (worldwide)”), elementul marcat
-    # worldwide / total e cel bun; altfel, primul
-    for part in s.split(" ; "):
-        if WORLDWIDE.search(part) and _first_money(part):
-            s = part
-            break
+    s = _segment(clean(raw))
     m = _first_money(s)
     if m is None:
         return Money(None, None, note="unknown" if UNKNOWN_DOLLAR.search(s) else "")
@@ -446,6 +468,7 @@ def build(films: pd.DataFrame) -> pd.DataFrame:
             "budget_wp_amount": budget.amount, "budget_wp_currency": budget.currency,
             "gross_wp_amount": gross.amount, "gross_wp_currency": gross.currency,
             "budget_wp_note": budget.note or None, "gross_wp_note": gross.note or None,
+            "gross_wp_domestic": gross_scope(gross_raw)[0], "gross_wp_rental": gross_scope(gross_raw)[1],
             "budget_wp_other_currency": budget.currency not in (None, "USD"),
             "gross_wp_other_currency": gross.currency not in (None, "USD"),
             "distributor_wp": distributors[0] if distributors else None,
@@ -481,6 +504,7 @@ def report(df: pd.DataFrame) -> str:
         f"  bugete noi în USD adăugate de Wikipedia: {new['budget_wp'].notna().sum()} "
         f"(din care intervale: {(new['budget_wp'].notna() & new['budget_wp_range']).sum()})",
         f"  buget doar în altă monedă: {new['budget_wp_other_currency'].sum()}",
+        f"Încasări doar SUA/Canada: {df['gross_wp_domestic'].sum()}; rentals: {df['gross_wp_rental'].sum()}",
         f"Cu distribuitor în infobox: {df['distributor_wp'].notna().sum()} "
         f"(top: {', '.join(f'{k}={v}' for k, v in df['distributor_wp'].value_counts().head(5).items())})",
         f"Cu câmp based_on în infobox: {df['based_on_wp'].notna().sum()}",
