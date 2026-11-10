@@ -4,7 +4,7 @@ Issue #27 — Integrare și curățare → dataset final
 Pornește de la manifest, unește toate tabelele din data/interim/ pe imdb_id,
 alege bugetul și încasările finale, aplică regulile de curățare, calculează
 ținta și caracteristicile și scrie:
-    data/processed/movies_dataset.csv
+    data/processed/movies_dataset.parquet
     docs/integration_report.md
 
 Usage:
@@ -30,7 +30,7 @@ from extraction.utils import (BUDGET_RANGE, GROSS_RANGE, PROJECT_ROOT,
 
 INTERIM = PROJECT_ROOT / "data" / "interim"
 PROCESSED = PROJECT_ROOT / "data" / "processed"
-OUT_CSV = PROCESSED / "movies_dataset.csv"
+OUT_PATH = PROCESSED / "movies_dataset.parquet"   # datele se păstrează doar în parquet (#51)
 REPORT = PROJECT_ROOT / "docs" / "integration_report.md"
 
 # Ordinea de prioritate (CLAUDE.md); coloanele țin valoarea în USD a fiecărei surse
@@ -848,7 +848,7 @@ def meta_section(out: pd.DataFrame) -> str:
     n_features = len(feature_columns(out))
     return f"""## De ce excludem coloanele META
 
-`extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; în model intră doar cele {n_features} din FEATURES (`feature_columns(df)`), iar `extraction/test_columns.py` verifică asta pe CSV. META sunt cele {len(meta)} coloane despre **date**, nu despre film: sursa valorii, câte surse au o valoare și câte sunt de acord, sumele brute, monedele și cursurile. Ele prezic ținta, pentru că un film cu încasări raportate peste tot e de obicei un film cunoscut, care a mers bine:
+`extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; în model intră doar cele {n_features} din FEATURES (`feature_columns(df)`), iar `extraction/test_columns.py` verifică asta pe dataset-ul final. META sunt cele {len(meta)} coloane despre **date**, nu despre film: sursa valorii, câte surse au o valoare și câte sunt de acord, sumele brute, monedele și cursurile. Ele prezic ținta, pentru că un film cu încasări raportate peste tot e de obicei un film cunoscut, care a mers bine:
 
 **% profitabile după numărul de surse cu încasări**
 
@@ -989,7 +989,7 @@ def write_report(out: pd.DataFrame, funnel: list, args, stats: dict = None) -> N
 
 Generat cu `python extraction/integrate.py --threshold {threshold} --roi-rule {args.roi_rule} --budget-choice {args.budget_choice}`.
 
-**Rezultat:** {_n(n)} filme în `data/processed/movies_dataset.csv`.
+**Rezultat:** {_n(n)} filme în `data/processed/movies_dataset.parquet`.
 
 ## Ce filme am scos
 
@@ -1102,12 +1102,12 @@ def main() -> None:
     out = features(df, args.threshold)
 
     PROCESSED.mkdir(parents=True, exist_ok=True)
-    out.to_csv(OUT_CSV, index=False, encoding="utf-8", lineterminator="\n")
+    out.to_parquet(OUT_PATH, index=False)
     discover = pd.read_parquet(INTERIM / "tmdb_movies.parquet", columns=["imdb_id"])["imdb_id"]
     stats["from_discover"] = int(out["imdb_id"].isin(discover).sum())
     write_report(out, funnel, args, stats)
 
-    print(f"Scris {OUT_CSV.relative_to(PROJECT_ROOT)}: {len(out):,} filme, {len(out.columns)} coloane")
+    print(f"Scris {OUT_PATH.relative_to(PROJECT_ROOT)}: {len(out):,} filme, {len(out.columns)} coloane")
     print(f"Scris {REPORT.relative_to(PROJECT_ROOT)}")
     for f in funnel:
         print(f"  {f['Pas']:15s} -{f['Scoase']:>6,}  -> {f['Rămân']:>6,}")
