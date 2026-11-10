@@ -41,6 +41,28 @@ Primele 20 (după data lansării): D.E.B.S., Edmond, Pistol Whipped, Sleep Deale
 
 Datele de lansare pe tipuri vin din răspunsurile TMDB deja descărcate (`python extraction/tmdb.py --release-dates`). Lipsesc pentru 242 filme (detaliile TMDB adăugate la manifest nu sunt în arhiva din Releases); la ele contează doar distribuitorul.
 
+## Cine lipsește: filmele fără încasări
+
+Cea mai mare pierdere din pâlnie e pasul „încasări”: filme cu buget, dar fără încasări mondiale în nicio sursă. Nu sunt o mostră la întâmplare:
+
+| | Scoase la „încasări” | Dataset final |
+|---|---|---|
+| Filme | 12.199 | 17.911 |
+| Voturi TMDB (mediană) | 18 | 189 |
+| Buget (mediană) | 0,8 mil. $ | 6,0 mil. $ |
+| Producții SUA | 40,8% | 56,6% |
+| În limba engleză | 60,6% | 64,8% |
+| 1950–1959 | 2,6% | 4,3% |
+| 1960–1969 | 5,1% | 3,3% |
+| 1970–1979 | 7,9% | 4,8% |
+| 1980–1989 | 7,7% | 9,9% |
+| 1990–1999 | 8,0% | 13,6% |
+| 2000–2009 | 22,8% | 24,3% |
+| 2010–2019 | 37,2% | 31,0% |
+| 2020–2024 | 8,5% | 8,7% |
+
+Filmele scoase sunt mult mai mici și mai puțin cunoscute (mai puține voturi, buget mai mic, mai puține producții americane). Încasările lor nu apar nicăieri tocmai pentru că au fost mici, deci ele sunt, foarte probabil, mai des neprofitabile. Rata de 32,2% filme profitabile e deci **supraestimată** față de toate filmele lansate în cinema: descrie filmele destul de cunoscute ca să le găsim încasările, iar modelul va învăța pe această populație.
+
 ## Ținta
 
 Un film e **profitabil** dacă încasările sunt de cel puțin 2,5 ori bugetul (`roi = încasări / buget`).
