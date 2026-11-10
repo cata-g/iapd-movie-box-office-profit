@@ -134,7 +134,7 @@ Filmele de streaming cu o lansare doar simbolică în cinema ies din populație 
 | `country_{us,europe,asia,other}` | grupul țărilor de producție (un film poate avea mai multe) |
 | `is_franchise`, `sequel_number` | continuare: au apărut deja filme din aceeași colecție TMDB; câte (0 = primul film al seriei sau film independent). Primul film al unei serii nu contează ca franciză: colecția apare abia după ce succesul lui aduce o continuare (leakage, #47) |
 | `is_adaptation`, `adaptation_type` | ecranizare (Wikidata P144, keywords „based on …” sau `based on` din infobox); tipul sursei din Wikidata, `other` dacă e ecranizare fără tip cunoscut, `none` altfel |
-| `director_prev_films` | nr. de filme anterioare din dataset ale regizorului |
+| `director_prev_films` | nr. de filme anterioare din dataset ale regizorului, lansate cu cel puțin 6 luni înainte (încasările lor erau deja cunoscute, #49) |
 | `director_prev_mean_roi` | ROI-ul mediu al acelor filme (gol = fără istoric); sensibil la un singur hit extrem |
 | `director_prev_mean_log_roi` | media lui ln(ROI) a acelor filme; variantă robustă (0 = buget recuperat exact) |
 | `director_prev_profitable_rate` | fracția acelor filme cu ROI ≥ prag; variantă robustă |
