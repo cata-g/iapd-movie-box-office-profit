@@ -129,7 +129,7 @@ Filmele de streaming cu o lansare doar simbolică în cinema ies din populație 
 | `genres`, `genre_*` | genurile TMDB (separate prin `\|`) și one-hot |
 | `runtime_min` | durata în minute (gol = necunoscută) |
 | `certification` | G=0, PG=1, PG-13=2, R=3, NC-17=4 (gol = lipsă / NR) |
-| `kw_*` | one-hot pentru cele mai frecvente 30 de keywords TMDB din dataset, fără etichetele de ton (`amused`, `suspenseful`, … = reacția publicului, leakage) |
+| `kw_*` | one-hot pentru cele mai frecvente 30 de keywords TMDB din dataset, fără etichetele de ton (`amused`, `suspenseful`, … = reacția publicului, leakage) și fără cele care se află abia după lansare (`duringcreditsstinger`, `aftercreditsstinger`, `controversy` …, #47). Atenție: filmele populare au mai multe keywords, deci `kw_*` poartă și un semnal de popularitate (vezi raportul) |
 | `is_english`, `original_language` | limba originală: `en`, top 5 alte limbi sau `other` |
 | `country_{us,europe,asia,other}` | grupul țărilor de producție (un film poate avea mai multe) |
 | `is_franchise`, `sequel_number` | continuare: au apărut deja filme din aceeași colecție TMDB; câte (0 = primul film al seriei sau film independent). Primul film al unei serii nu contează ca franciză: colecția apare abia după ce succesul lui aduce o continuare (leakage, #47) |
