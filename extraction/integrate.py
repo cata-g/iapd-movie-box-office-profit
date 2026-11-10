@@ -10,6 +10,7 @@ alege bugetul și încasările finale, aplică regulile de curățare, calculeaz
 Usage:
     python extraction/integrate.py                  # prag 2.5
     python extraction/integrate.py --threshold 3
+    python extraction/integrate.py --roi-rule vechi --budget-choice prioritate   # regulile vechi
 """
 
 import argparse
@@ -37,8 +38,22 @@ BUDGET_SOURCES = {"tmdb": "budget_tmdb", "dbpedia": "budget_dbp",
 GROSS_SOURCES = {"wikipedia": "gross_wp", "dbpedia": "worldwide_gross_dbp",
                  "wikidata": "gross_wd", "tmdb": "revenue_tmdb"}
 
+# Grupuri de surse independente: DBpedia copiază infobox-ul Wikipedia, deci cele două
+# contează o singură dată când numărăm sursele care confirmă o valoare
+SOURCE_GROUP = {"tmdb": "tmdb", "wikidata": "wikidata", "dbpedia": "wiki", "wikipedia": "wiki"}
+
 CONFLICT_RATIO = 1.25          # max/min > 1.25 → conflict (> 25%)
 ROI_EXTREME = (0.001, 100)     # în afara intervalului → păstrat doar dacă e confirmat
+
+ROI_RULES = ("vechi", "surse-independente", "roi-recalculat")
+BUDGET_CHOICES = ("majoritate", "prioritate")
+ROI_RULE_TEXT = {
+    "vechi": "ROI sub 0,001 sau peste 100 pe care nu-l confirmă 2 surse (probabil o greșeală)",
+    "surse-independente": "ROI sub 0,001 sau peste 100 pe care nu-l confirmă 2 surse independente "
+                          "(DBpedia și Wikipedia contează o dată; probabil o greșeală)",
+    "roi-recalculat": "ROI sub 0,001 sau peste 100 care nu rămâne extrem când bugetul, apoi încasările "
+                      "sunt înlocuite cu valoarea unei surse independente (probabil o greșeală)",
+}
 MIN_RUNTIME = 40               # sub 40 min = scurtmetraj (fără lansare în cinema)
 
 # ID-uri TMDB ale marilor studiouri și ale diviziilor lor de film
@@ -126,25 +141,126 @@ def _plausible(s: pd.Series, lo: float, hi: float) -> pd.Series:
     return s.where(s.between(lo, hi))
 
 
-def choose_value(df: pd.DataFrame, sources: dict, prefix: str) -> pd.DataFrame:
+def _close(a, b) -> bool:
+    """a și b sunt la cel mult ±25% una de alta (CONFLICT_RATIO)."""
+    return 1 / CONFLICT_RATIO <= a / b <= CONFLICT_RATIO
+
+
+def majority_choice(vals: pd.DataFrame) -> pd.Series:
+    """Sursa aleasă prin majoritate, pentru fiecare film. `vals` are coloanele în ordinea
+    de prioritate. Din fiecare grup SOURCE_GROUP intră un reprezentant: sursa grupului cu
+    cea mai mare prioritate. Sprijinul unui reprezentant = câți reprezentanți (inclusiv el)
+    sunt la ±25% de el. Rămâne sursa prioritară dacă are sprijinul maxim; altfel, cea mai
+    prioritară sursă cu sprijin maxim."""
+    names = list(vals.columns)
+    chosen = []
+    for row in vals.to_numpy(dtype=float):
+        reps, seen = [], set()
+        for name, v in zip(names, row):
+            if not np.isnan(v) and SOURCE_GROUP[name] not in seen:
+                seen.add(SOURCE_GROUP[name])
+                reps.append((name, v))
+        if not reps:
+            chosen.append(None)
+            continue
+        support = [sum(_close(v, w) for _, w in reps) for _, v in reps]
+        chosen.append(reps[support.index(max(support))][0])   # primul cu maxim = cel mai prioritar
+    return pd.Series(chosen, index=vals.index, dtype=object)
+
+
+def choose_value(df: pd.DataFrame, sources: dict, prefix: str, majority: bool = False) -> pd.DataFrame:
+    """Valoarea finală `prefix` și sursa ei. `sources` = {sursă: coloană} în ordinea de prioritate;
+    cu majority=True, sursa vine din majority_choice (doar pentru buget)."""
     vals = pd.DataFrame({name: df[col] for name, col in sources.items()})
-    first = vals.notna().idxmax(axis=1).where(vals.notna().any(axis=1))
-    df[prefix] = vals.bfill(axis=1).iloc[:, 0]
+    if majority:
+        first = majority_choice(vals)
+    else:
+        first = vals.notna().idxmax(axis=1).where(vals.notna().any(axis=1))
+    df[prefix] = [vals.at[i, s] if isinstance(s, str) else np.nan for i, s in zip(vals.index, first)]
     df[f"{prefix}_source"] = first
     df[f"{prefix}_n_sources"] = vals.notna().sum(axis=1)
     df[f"{prefix}_conflict"] = (vals.max(axis=1) / vals.min(axis=1)) > CONFLICT_RATIO
-    # câte surse (inclusiv cea aleasă) sunt la cel mult 25% de valoarea aleasă
+    # câte surse sunt la cel mult 25% de valoarea aleasă (inclusiv cea aleasă)
     ratio = vals.div(df[prefix], axis=0)
-    df[f"{prefix}_n_agree"] = ratio.apply(
-        lambda r: r.between(1 / CONFLICT_RATIO, CONFLICT_RATIO)).sum(axis=1)
+    agree = ratio.apply(lambda r: r.between(1 / CONFLICT_RATIO, CONFLICT_RATIO))
+    df[f"_{prefix}_n_agree_raw"] = agree.sum(axis=1)                 # fiecare sursă separat (regula „vechi”)
+    groups = pd.DataFrame({g: agree[[n for n in sources if SOURCE_GROUP[n] == g]].any(axis=1)
+                           for g in dict.fromkeys(SOURCE_GROUP[n] for n in sources)})
+    df[f"{prefix}_n_agree"] = groups.sum(axis=1)                      # DBpedia + Wikipedia = o sursă
     return df
+
+
+def roi_confirmed(df: pd.DataFrame, rule: str, budget_sources: dict = None,
+                  gross_sources: dict = None) -> pd.Series:
+    """True dacă un ROI extrem (în afara ROI_EXTREME) e confirmat și filmul rămâne.
+      vechi               2 surse (fiecare separat) confirmă și bugetul, și încasările
+      surse-independente  la fel, dar DBpedia și Wikipedia contează o singură dată
+      roi-recalculat      ROI-ul rămâne extrem (pe aceeași parte) și cu un buget dintr-un alt
+                          grup de surse decât budget_source, și cu încasări dintr-un alt grup
+                          decât gross_source; fiecare valoare se confirmă separat, cu toleranța
+                          de ±25% aplicată fiecăreia (prag 100 / 1,25² sus, 0,001 · 1,25² jos)"""
+    if rule == "vechi":
+        return (df["_budget_n_agree_raw"] >= 2) & (df["_gross_n_agree_raw"] >= 2)
+    if rule == "surse-independente":
+        return (df["budget_n_agree"] >= 2) & (df["gross_n_agree"] >= 2)
+    if rule != "roi-recalculat":
+        raise ValueError(f"regulă necunoscută: {rule}")
+
+    budget_sources = budget_sources or BUDGET_SOURCES
+    gross_sources = gross_sources or GROSS_SOURCES
+    lo, hi = ROI_EXTREME[0] * CONFLICT_RATIO ** 2, ROI_EXTREME[1] / CONFLICT_RATIO ** 2
+    high = df["roi"] > ROI_EXTREME[1]
+
+    def extreme(roi: pd.Series) -> pd.Series:
+        return roi.gt(hi).where(high, roi.lt(lo))      # NaN → False
+
+    def alternatives(sources: dict, chosen: pd.Series) -> pd.DataFrame:
+        group = chosen.map(SOURCE_GROUP)
+        return pd.DataFrame({n: df[c].where(group != SOURCE_GROUP[n]) for n, c in sources.items()})
+
+    b_alt = alternatives(budget_sources, df["budget_source"])
+    g_alt = alternatives(gross_sources, df["gross_source"])
+    by_budget = b_alt.rdiv(df["worldwide_gross"], axis=0).apply(extreme).any(axis=1)
+    by_gross = g_alt.div(df["budget"], axis=0).apply(extreme).any(axis=1)
+    return by_budget & by_gross
 
 
 # ---------------------------------------------------------------------------
 # Curățare
 # ---------------------------------------------------------------------------
 
-def clean(df: pd.DataFrame, funnel: list) -> pd.DataFrame:
+def count_gross_only(manifest) -> int:
+    """Filmele cu încasări plauzibile (GROSS_RANGE) în cel puțin o sursă care nu sunt în
+    manifest (nicio sursă nu are buget) și au anul în YEAR_MIN..YEAR_MAX. Anul: TMDB
+    release_date, apoi anul din DBpedia, apoi cel din Wikidata."""
+    in_manifest = {k for k in manifest if k}
+    tmdb = pd.concat([pd.read_parquet(INTERIM / f, columns=["imdb_id", "release_date", "revenue_tmdb"])
+                      for f in ("tmdb_movies.parquet", "tmdb_extra.parquet")], ignore_index=True)
+    dbp = pd.read_parquet(INTERIM / "dbpedia.parquet", columns=["imdb_id", "year", "worldwide_gross_dbp"])
+    wd = pd.read_parquet(INTERIM / "wikidata.parquet", columns=["imdb_id", "year", "gross_wd"])
+    wp = pd.read_parquet(INTERIM / "wikipedia.parquet", columns=["imdb_id", "gross_wp"])
+
+    with_gross = set()
+    for src, col in [(tmdb, "revenue_tmdb"), (dbp, "worldwide_gross_dbp"), (wd, "gross_wd"), (wp, "gross_wp")]:
+        with_gross |= set(src.loc[_plausible(src[col], *GROSS_RANGE).notna(), "imdb_id"].dropna())
+    ids = pd.Index(sorted(with_gross - in_manifest - {""}))
+
+    year = pd.Series(np.nan, index=ids)
+    tmdb_year = pd.to_datetime(tmdb["release_date"], errors="coerce").dt.year
+    for src_year in [tmdb_year.groupby(tmdb["imdb_id"]).min(),
+                     pd.to_numeric(dbp["year"], errors="coerce").groupby(dbp["imdb_id"]).min(),
+                     pd.to_numeric(wd["year"], errors="coerce").groupby(wd["imdb_id"]).min()]:
+        src_year = src_year.astype(float)
+        year = year.fillna(src_year.reindex(ids))
+    return int(year.between(YEAR_MIN, YEAR_MAX).sum())
+
+
+def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "roi-recalculat",
+          budget_choice: str = "majoritate", budget_sources: dict = None,
+          gross_sources: dict = None) -> pd.DataFrame:
+    budget_sources = budget_sources or BUDGET_SOURCES
+    gross_sources = gross_sources or GROSS_SOURCES
+
     def step(name: str, mask: pd.Series, rule: str) -> pd.DataFrame:
         nonlocal df
         removed = int((~mask).sum())
@@ -152,24 +268,27 @@ def clean(df: pd.DataFrame, funnel: list) -> pd.DataFrame:
         funnel.append({"Pas": name, "Ce s-a scos": rule, "Scoase": removed, "Rămân": len(df)})
         return df
 
-    funnel.append({"Pas": "start", "Ce s-a scos": "toate filmele din manifest",
-                   "Scoase": 0, "Rămân": len(df)})
+    funnel.append({"Pas": "start",
+                   "Ce s-a scos": f"filme {YEAR_MIN}–{YEAR_MAX} cu buget sau încasări în cel puțin o sursă",
+                   "Scoase": 0, "Rămân": len(df) + gross_only})
+    funnel.append({"Pas": "fără buget",
+                   "Ce s-a scos": "au încasări, dar nicio sursă nu are buget (nu intră în manifest; "
+                                  "fără buget nu există ROI)",
+                   "Scoase": gross_only, "Rămân": len(df)})
 
     # Valori absurde per sursă → lipsă (buget < 10.000 USD = eroare)
     n_budget_err = {}
-    for col in BUDGET_SOURCES.values():
+    for col in budget_sources.values():
         raw = pd.to_numeric(df[col], errors="coerce")
         df[col] = _plausible(raw, *BUDGET_RANGE)
         n_budget_err[col] = int((raw.notna() & (raw > 0) & df[col].isna()).sum())
-    for col in GROSS_SOURCES.values():
+    for col in gross_sources.values():
         df[col] = _plausible(df[col], *GROSS_RANGE)
 
-    df = choose_value(df, BUDGET_SOURCES, "budget")
-    df = choose_value(df, GROSS_SOURCES, "worldwide_gross")
-    df = df.rename(columns={"worldwide_gross_source": "gross_source",
-                            "worldwide_gross_n_sources": "gross_n_sources",
-                            "worldwide_gross_conflict": "gross_conflict",
-                            "worldwide_gross_n_agree": "gross_n_agree"})
+    df = choose_value(df, budget_sources, "budget", majority=budget_choice == "majoritate")
+    df = choose_value(df, gross_sources, "worldwide_gross")
+    df = df.rename(columns={f"{p}worldwide_gross_{k}": f"{p}gross_{k}" for p in ("", "_")
+                            for k in ("source", "n_sources", "conflict", "n_agree", "n_agree_raw")})
 
     step("buget", df["budget"].notna(),
          "niciun buget între 10.000 $ și 500 mil. $ (bugete prea mici ignorate: "
@@ -190,9 +309,8 @@ def clean(df: pd.DataFrame, funnel: list) -> pd.DataFrame:
 
     df["roi"] = df["worldwide_gross"] / df["budget"]
     extreme = ~df["roi"].between(*ROI_EXTREME)
-    confirmed = (df["budget_n_agree"] >= 2) & (df["gross_n_agree"] >= 2)
-    step("ROI extrem", ~extreme | confirmed,
-         "ROI sub 0,001 sau peste 100 pe care nu-l confirmă 2 surse (probabil o greșeală)")
+    confirmed = roi_confirmed(df, roi_rule, budget_sources, gross_sources)
+    step("ROI extrem", ~extreme | confirmed, ROI_RULE_TEXT[roi_rule])
     return df
 
 
@@ -365,7 +483,14 @@ def _md_table(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def write_report(out: pd.DataFrame, funnel: list, threshold: float) -> None:
+def _same_share(out: pd.DataFrame, a: str, b: str) -> str:
+    """Ce parte din filmele cu valoare în ambele coloane au exact aceeași valoare."""
+    both = out[[a, b]].dropna()
+    return _pct((both[a] == both[b]).mean()) if len(both) else "–"
+
+
+def write_report(out: pd.DataFrame, funnel: list, args) -> None:
+    threshold = args.threshold
     n = len(out)
     pos = int(out["profitable"].sum())
     t = str(threshold).replace(".", ",")
@@ -383,12 +508,13 @@ def write_report(out: pd.DataFrame, funnel: list, threshold: float) -> None:
                       for c in ["director_prev_mean_roi", "director_prev_mean_log_roi",
                                 "director_prev_profitable_rate", "cast_prev_mean_roi",
                                 "cast_prev_mean_log_roi", "cast_prev_profitable_rate"]])
+    budget_rule = "" if args.budget_choice == "prioritate" else f""", dar prin **majoritate**: din fiecare grup independent (tmdb, wikidata, wiki = dbpedia/wikipedia) intră o singură valoare, a sursei celei mai prioritare din grup. Câștigă valoarea cu care sunt de acord (la ±25%) cele mai multe grupuri; la egalitate rămâne ordinea de mai sus. Așa, o greșeală izolată a TMDB nu mai câștigă doar pentru că TMDB e primul (Dragon Ball Super: Broly: TMDB 1 mil. $, Wikidata și Wikipedia 8,5 mil. $). Limită: Wikidata are exact aceeași valoare ca Wikipedia la {_same_share(out, "budget_wd", "budget_wp")} din bugete, deci și „majoritatea” poate fi uneori aceeași informație copiată."""
     final_src = _md_table([{"Sursă": k, "Buget": int((out["budget_source"] == k).sum()),
                             "Încasări": int((out["gross_source"] == k).sum())} for k in BUDGET_SOURCES])
 
     text = f"""# Raport de integrare (#27)
 
-Generat cu `python extraction/integrate.py --threshold {threshold}`.
+Generat cu `python extraction/integrate.py --threshold {threshold} --roi-rule {args.roi_rule} --budget-choice {args.budget_choice}`.
 
 **Rezultat:** {_n(n)} filme în `data/processed/movies_dataset.csv`.
 
@@ -410,8 +536,8 @@ Clasele sunt dezechilibrate: un model care spune mereu „neprofitabil” are dr
 ## De unde vin bugetul și încasările
 
 Când mai multe surse au o valoare, o luăm pe cea din sursa mai sigură:
-- buget: {" → ".join(BUDGET_SOURCES)}
-- încasări: {" → ".join(GROSS_SOURCES)}
+- buget: {" → ".join(BUDGET_SOURCES)}{budget_rule}
+- încasări: {" → ".join(GROSS_SOURCES)} (doar ordinea; TMDB raportează sistematic încasări mai mici, de aceea e ultima)
 
 {final_src}
 
@@ -431,7 +557,7 @@ Câte surse au o valoare pentru fiecare film:
 
 Sursele nu se pun mereu de acord: la {_n(int(out["budget_conflict"].sum()))} filme ({_pct(out["budget_conflict"].mean())}) bugetele diferă cu peste 25%, iar la {_n(int(out["gross_conflict"].sum()))} ({_pct(out["gross_conflict"].mean())}) încasările.
 
-Atenție: DBpedia copiază datele din Wikipedia, deci „2 surse” poate fi de fapt una singură.
+DBpedia copiază infobox-ul Wikipedia (valori identice la {_same_share(out, "budget_dbp", "budget_wp")} din bugete și {_same_share(out, "worldwide_gross_dbp", "gross_wp")} din încasări), deci nu e o sursă independentă. De aceea `budget_n_agree` și `gross_n_agree` (câte surse confirmă valoarea aleasă, la ±25%) le numără ca **o singură sursă**: tmdb, wikidata și wiki (dbpedia sau wikipedia) — maximum 3.
 
 ## Date lipsă
 
@@ -466,18 +592,23 @@ Media simplă aproape nu are legătură cu ținta; variantele noi au.
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--threshold", type=float, default=2.5, help="prag ROI pentru `profitable`")
+    ap.add_argument("--roi-rule", choices=ROI_RULES, default="roi-recalculat",
+                    help="când e confirmat un ROI extrem (sub 0,001 sau peste 100)")
+    ap.add_argument("--budget-choice", choices=BUDGET_CHOICES, default="majoritate",
+                    help="cum se alege bugetul când sursele nu se pun de acord")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")   # consola Windows (cp1252)
 
     manifest = json.loads((INTERIM / "movies_manifest.json").read_text(encoding="utf-8"))
     df = load_sources(manifest)
     funnel: list = []
-    df = clean(df, funnel)
+    df = clean(df, funnel, gross_only=count_gross_only(manifest), roi_rule=args.roi_rule,
+               budget_choice=args.budget_choice)
     out = features(df, args.threshold)
 
     PROCESSED.mkdir(parents=True, exist_ok=True)
     out.to_csv(OUT_CSV, index=False, encoding="utf-8", lineterminator="\n")
-    write_report(out, funnel, args.threshold)
+    write_report(out, funnel, args)
 
     print(f"Scris {OUT_CSV.relative_to(PROJECT_ROOT)}: {len(out):,} filme, {len(out.columns)} coloane")
     print(f"Scris {REPORT.relative_to(PROJECT_ROOT)}")
