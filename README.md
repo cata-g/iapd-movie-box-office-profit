@@ -132,7 +132,7 @@ Filmele de streaming cu o lansare doar simbolică în cinema ies din populație 
 | `kw_*` | one-hot pentru cele mai frecvente 30 de keywords TMDB din dataset, fără etichetele de ton (`amused`, `suspenseful`, … = reacția publicului, leakage) |
 | `is_english`, `original_language` | limba originală: `en`, top 5 alte limbi sau `other` |
 | `country_{us,europe,asia,other}` | grupul țărilor de producție (un film poate avea mai multe) |
-| `is_franchise`, `sequel_number` | face parte dintr-o colecție TMDB; al câtelea film din colecție (0 = nu e în colecție) |
+| `is_franchise`, `sequel_number` | continuare: au apărut deja filme din aceeași colecție TMDB; câte (0 = primul film al seriei sau film independent). Primul film al unei serii nu contează ca franciză: colecția apare abia după ce succesul lui aduce o continuare (leakage, #47) |
 | `is_adaptation`, `adaptation_type` | ecranizare (Wikidata P144, keywords „based on …” sau `based on` din infobox); tipul sursei din Wikidata, `other` dacă e ecranizare fără tip cunoscut, `none` altfel |
 | `director_prev_films` | nr. de filme anterioare din dataset ale regizorului |
 | `director_prev_mean_roi` | ROI-ul mediu al acelor filme (gol = fără istoric); sensibil la un singur hit extrem |
