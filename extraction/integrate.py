@@ -412,7 +412,14 @@ def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "
          "niciun buget între 10.000 $ și 500 mil. $ după conversia în USD (bugete în afara intervalului, "
          "ignorate: " + ", ".join(f"{k.split('_')[1]} {_n(v)}" for k, v in n_budget_err.items() if v)
          + "; fără curs: " + _n(sum(stats["fx_lost_budget"].values())) + ")")
-    stats["lost_gross_ids"] = df.index[df["worldwide_gross"].isna()]
+    no_gross = df["worldwide_gross"].isna()
+    stats["dropped_gross"] = pd.DataFrame({
+        "vote_count": pd.to_numeric(df.loc[no_gross, "vote_count"], errors="coerce"),
+        "budget": df.loc[no_gross, "budget"],
+        "us": df.loc[no_gross, "production_countries"].apply(lambda cs: "US" in _as_list(cs)),
+        "english": df.loc[no_gross, "original_language"] == "en",
+        "year": df.loc[no_gross, "fx_year"],
+    })
     step("încasări", df["worldwide_gross"].notna(),
          "nicio sursă nu are încasări mondiale (după conversia în USD; fără curs: "
          + _n(sum(stats["fx_lost_gross"].values())) + ")")
@@ -785,6 +792,34 @@ La predicție, pentru un film care nu a fost încă lansat, nu știm câte surse
 """
 
 
+def dropped_section(out: pd.DataFrame, stats: dict) -> str:
+    dropped = stats.get("dropped_gross")
+    if dropped is None:
+        return ""
+    final = pd.DataFrame({"vote_count": out["vote_count"], "budget": out["budget"],
+                          "us": out["country_us"] == 1, "english": out["is_english"] == 1,
+                          "year": out["release_year"]})
+
+    def profile(d: pd.DataFrame) -> dict:
+        decade = (d["year"].dropna() // 10 * 10).astype(int).value_counts(normalize=True)
+        return {"Filme": _n(len(d)), "Voturi TMDB (mediană)": _n(int(d["vote_count"].median())),
+                "Buget (mediană)": f"{d['budget'].median() / 1e6:.1f}".replace(".", ",") + " mil. $",
+                "Producții SUA": _pct(d["us"].mean()), "În limba engleză": _pct(d["english"].mean()),
+                **{f"{y}–{min(y + 9, YEAR_MAX)}": _pct(decade.get(y, 0)) for y in range(YEAR_MIN, YEAR_MAX + 1, 10)}}
+
+    a, b = profile(dropped), profile(final)
+    table = "\n".join(["| | Scoase la „încasări” | Dataset final |", "|---|---|---|"]
+                      + [f"| {k} | {a[k]} | {b[k]} |" for k in a])
+    return f"""## Cine lipsește: filmele fără încasări
+
+Cea mai mare pierdere din pâlnie e pasul „încasări”: filme cu buget, dar fără încasări mondiale în nicio sursă. Nu sunt o mostră la întâmplare:
+
+{table}
+
+Filmele scoase sunt mult mai mici și mai puțin cunoscute (mai puține voturi, buget mai mic, mai puține producții americane). Încasările lor nu apar nicăieri tocmai pentru că au fost mici, deci ele sunt, foarte probabil, mai des neprofitabile. Rata de {_pct(out["profitable"].mean())} filme profitabile e deci **supraestimată** față de toate filmele lansate în cinema: descrie filmele destul de cunoscute ca să le găsim încasările, iar modelul va învăța pe această populație.
+"""
+
+
 def write_report(out: pd.DataFrame, funnel: list, args, stats: dict = None) -> None:
     threshold = args.threshold
     stats = stats or {}
@@ -820,6 +855,7 @@ Generat cu `python extraction/integrate.py --threshold {threshold} --roi-rule {a
 {_md_table(funnel)}
 
 {streaming_section(stats)}
+{dropped_section(out, stats)}
 ## Ținta
 
 Un film e **profitabil** dacă încasările sunt de cel puțin {t} ori bugetul (`roi = încasări / buget`).
