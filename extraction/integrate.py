@@ -80,6 +80,12 @@ MAJOR_STUDIOS = {
     "Lionsgate": [1632, 35],
 }
 MAJOR_IDS = {i for ids in MAJOR_STUDIOS.values() for i in ids}
+# Aceleași grupuri, după numele distribuitorului principal din infobox (#45); diviziile de
+# video (Home Entertainment / Home Video) nu distribuie în cinema și nu contează
+MAJOR_DISTRIBUTORS = re.compile(
+    r"^(?:walt disney|buena vista|touchstone|warner bros|new line|universal|focus features|paramount"
+    r"(?! ?\+)|sony pictures|columbia|tri-?star|20th century|twentieth century|fox searchlight|"
+    r"searchlight pictures|lions ?gate|summit entertainment)(?!.*home (?:entertainment|video))", re.I)
 
 CERTIFICATION = {"G": 0, "PG": 1, "PG-13": 2, "R": 3, "NC-17": 4}
 
@@ -526,9 +532,13 @@ def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
             cols = [f"{who}_{a}_{kind}_before" for a in ("oscar", "globe", "bafta")]
             out[f"{who}_award_{kind}_before"] = df[cols].fillna(0).sum(axis=1).astype(int)
 
-    # 3. Mare studio
+    # 3. Mare studio: producție (companiile TMDB) și distribuție (distribuitorul principal din
+    # infobox; lista completă poate avea distribuitori adăugați după lansare: reluări, alte piețe)
     out["major_studio"] = df["company_ids"].apply(
         lambda ids: int(any(int(i) in MAJOR_IDS for i in _as_list(ids))))
+    out["major_distributor"] = df["distributor_wp"].fillna("").str.strip().str.match(
+        MAJOR_DISTRIBUTORS).astype(int)
+    out["major_any"] = (out["major_studio"] | out["major_distributor"]).astype(int)
 
     # 4–6. Data lansării
     out["release_date"] = df["release_date"].dt.strftime("%Y-%m-%d")
@@ -603,6 +613,10 @@ def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
             out[f"{kind}_{p}_amount"] = df[f"{kind}_{p}_amount"].round(2)
             out[f"{kind}_{p}_currency"] = df[f"{kind}_{p}_currency"]
     out["roi_currency"] = df["roi_currency"]
+    # Calitatea datelor: bugetul final e mijlocul unui interval din infobox („$10–15 million”)
+    wp = pd.to_numeric(df["budget_wp"], errors="coerce")
+    out["budget_is_range"] = (df["budget_wp_range"].fillna(False).astype(bool)
+                              & (df["budget"] / wp).between(1 / CONFLICT_RATIO, CONFLICT_RATIO)).astype(int)
     out["fx_year"] = df["fx_year"]
     out["budget_fx_rate"] = df["budget_fx_rate"].round(6)
     out["gross_fx_rate"] = df["gross_fx_rate"].round(6)
@@ -712,6 +726,27 @@ Datele de lansare pe tipuri vin din răspunsurile TMDB deja descărcate (`python
 """
 
 
+def studio_section(out: pd.DataFrame) -> str:
+    rows = []
+    for col, what in (("major_studio", "producție: o companie TMDB e un mare studio"),
+                      ("major_distributor", "distribuitorul principal din infobox e un mare studio"),
+                      ("major_any", "oricare din cele două")):
+        yes = out[col] == 1
+        rows.append({"Coloană": f"`{col}`", "Ce înseamnă": what, "Filme cu 1": int(yes.sum()),
+                     "% profitabile (1)": _pct(out.loc[yes, "profitable"].mean()),
+                     "% profitabile (0)": _pct(out.loc[~yes, "profitable"].mean())})
+    only_dist = int(((out["major_distributor"] == 1) & (out["major_studio"] == 0)).sum())
+    only_prod = int(((out["major_distributor"] == 0) & (out["major_studio"] == 1)).sum())
+    return f"""## Mare studio: producție sau distribuție
+
+{_md_table(rows)}
+
+Față de `major_studio`, {_n(only_dist)} filme trec în clasa „mare studio” doar prin distribuitor (de exemplu filme independente cumpărate de Universal sau Sony Pictures Classics), iar {_n(only_prod)} au un mare studio printre producători, dar alt distribuitor principal. `major_any` le cuprinde pe toate. Contează doar distribuitorul principal: lista completă din infobox poate avea distribuitori adăugați după lansare (reluări, alte piețe).
+
+`budget_is_range` = 1 la {_n(int(out["budget_is_range"].sum()))} filme ({_pct(out["budget_is_range"].mean())}): bugetul final e mijlocul unui interval din infobox („$10–15 million”). E o coloană despre calitatea datelor, nu o caracteristică pentru model.
+"""
+
+
 def write_report(out: pd.DataFrame, funnel: list, args, stats: dict = None) -> None:
     threshold = args.threshold
     stats = stats or {}
@@ -785,6 +820,7 @@ Sursele nu se pun mereu de acord: la {_n(int(out["budget_conflict"].sum()))} fil
 DBpedia copiază infobox-ul Wikipedia (valori identice la {_same_share(out, "budget_dbp", "budget_wp")} din bugete și {_same_share(out, "worldwide_gross_dbp", "gross_wp")} din încasări), deci nu e o sursă independentă. De aceea `budget_n_agree` și `gross_n_agree` (câte surse confirmă valoarea aleasă, la ±25%) le numără ca **o singură sursă**: tmdb, wikidata și wiki (dbpedia sau wikipedia) — maximum 3.
 
 {currency_section(out, stats)}
+{studio_section(out)}
 ## Date lipsă
 
 {missing}
