@@ -59,6 +59,16 @@ ROI_RULE_TEXT = {
 }
 MIN_RUNTIME = 40               # sub 40 min = scurtmetraj (fără lansare în cinema)
 
+# Filme de streaming cu o lansare în cinema doar simbolică: în afara populației (filme lansate
+# în cinema). Se scot doar dacă AU încasări sub 5% din buget (Manchester by the Sea, distribuit
+# de Amazon, a rulat cu adevărat în cinema și rămâne).
+STREAMING_DISTRIBUTORS = re.compile(
+    r"^(?:Netflix|Amazon Studios|Amazon Prime Video|Amazon Prime|Prime Video|Apple TV\+|Disney\+"
+    r"(?: Hotstar)?|Hulu|HBO Max|Max|Paramount\+|Peacock)$", re.I)
+STREAMING_DIGITAL_DAYS = 30    # lansare digitală (TMDB tip 4) la cel mult 30 de zile după cinema
+STREAMING_DIGITAL_FROM = 2005  # înainte nu exista distribuție digitală: tipul 4 e o casetă/DVD marcată greșit
+STREAMING_MAX_ROI = 0.05
+
 # ID-uri TMDB ale marilor studiouri și ale diviziilor lor de film
 MAJOR_STUDIOS = {
     "Disney": [2, 3166, 3, 6125, 171656, 420, 1, 9195],
@@ -125,6 +135,7 @@ def load_sources(manifest: dict) -> pd.DataFrame:
     wd = _dedupe(pd.read_parquet(INTERIM / "wikidata.parquet")).rename(columns={"year": "year_wd"})
     wp = _dedupe(pd.read_parquet(INTERIM / "wikipedia.parquet"))
     aw = _dedupe(pd.read_parquet(INTERIM / "awards.parquet"))
+    rd = pd.read_parquet(INTERIM / "tmdb_release_dates.parquet").drop_duplicates("tmdb_id")
 
     # Manifestul (#5) are doar filmele cu buget în USD; se adaugă cele cu buget doar în altă monedă
     ids = sorted({k for k in manifest if k} | _currency_ids(wd, wp, "budget"))
@@ -142,6 +153,7 @@ def load_sources(manifest: dict) -> pd.DataFrame:
                      "budget_wp_range", "gross_wp_amount", "gross_wp_currency", "gross_wp_note",
                      "based_on_wp", "distributor_wp"]])
     df = df.join(aw)
+    df = df.merge(rd[["tmdb_id", "first_theatrical", "first_digital"]], on="tmdb_id", how="left").set_index(df.index)
     return native_amounts(df)
 
 
@@ -398,17 +410,6 @@ def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "
          "nicio sursă nu are încasări mondiale (după conversia în USD; fără curs: "
          + _n(sum(stats["fx_lost_gross"].values())) + ")")
 
-    df["release_date"] = pd.to_datetime(df["release_date"], errors="coerce")
-    step("dată lansare", df["release_date"].notna(),
-         "fără dată de lansare în TMDB")
-    year = df["release_date"].dt.year
-    step("interval ani", year.between(YEAR_MIN, YEAR_MAX), f"lansate înainte de {YEAR_MIN} sau după {YEAR_MAX}")
-
-    is_tv = df["genres"].apply(lambda g: g is not None and "TV Movie" in list(g))
-    step("film TV", ~is_tv, "filme TV (n-au rulat în cinema)")
-    runtime = pd.to_numeric(df["runtime"], errors="coerce")
-    step("scurtmetraj", ~runtime.between(1, MIN_RUNTIME - 1), f"scurtmetraje (sub {MIN_RUNTIME} min)")
-
     # ROI: în USD; când bugetul și încasările alese sunt în aceeași monedă, direct din sumele
     # native (raportul nu are nevoie de curs)
     def chosen(kind: str, field: str) -> pd.Series:
@@ -421,6 +422,34 @@ def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "
     df["roi"] = (df["worldwide_gross"] / df["budget"]).where(
         ~same, chosen("gross", "amount").astype(float) / chosen("budget", "amount").astype(float))
     df["roi_currency"] = b_cur.where(same, "USD")
+
+    df["release_date"] = pd.to_datetime(df["release_date"], errors="coerce")
+    step("dată lansare", df["release_date"].notna(),
+         "fără dată de lansare în TMDB")
+    year = df["release_date"].dt.year
+    step("interval ani", year.between(YEAR_MIN, YEAR_MAX), f"lansate înainte de {YEAR_MIN} sau după {YEAR_MAX}")
+
+    is_tv = df["genres"].apply(lambda g: g is not None and "TV Movie" in list(g))
+    step("film TV", ~is_tv, "filme TV (n-au rulat în cinema)")
+
+    by_distributor = df["distributor_wp"].fillna("").str.strip().str.match(STREAMING_DISTRIBUTORS)
+    digital_days = (df["first_digital"] - df["first_theatrical"]).dt.days
+    by_digital = (digital_days <= STREAMING_DIGITAL_DAYS) & (df["first_theatrical"].dt.year >= STREAMING_DIGITAL_FROM)
+    streaming = (by_distributor | by_digital) & (df["roi"] < STREAMING_MAX_ROI)
+    stats["streaming"] = {
+        "distribuitor": int((streaming & by_distributor & ~by_digital).sum()),
+        "digital": int((streaming & by_digital & ~by_distributor).sum()),
+        "ambele": int((streaming & by_distributor & by_digital).sum()),
+        "fără date TMDB": int(df["first_theatrical"].isna().sum()),
+        "titluri": df.loc[streaming].sort_values("release_date")["title"].head(20).tolist(),
+    }
+    step("streaming", ~streaming,
+         f"lansare de streaming (distribuitor Netflix, Amazon, Apple TV+, Disney+ ... sau lansare digitală "
+         f"la cel mult {STREAMING_DIGITAL_DAYS} de zile după cinema) cu încasări sub "
+         f"{int(STREAMING_MAX_ROI * 100)}% din buget: lansarea în cinema a fost doar simbolică")
+    runtime = pd.to_numeric(df["runtime"], errors="coerce")
+    step("scurtmetraj", ~runtime.between(1, MIN_RUNTIME - 1), f"scurtmetraje (sub {MIN_RUNTIME} min)")
+
     extreme = ~df["roi"].between(*ROI_EXTREME)
     confirmed = roi_confirmed(df, roi_rule, budget_sources, gross_sources)
     step("ROI extrem", ~extreme | confirmed, ROI_RULE_TEXT[roi_rule])
@@ -653,6 +682,36 @@ Seria World Bank începe în 1960: pentru filmele din 1950–1959 nu folosim alt
 """
 
 
+def streaming_section(stats: dict) -> str:
+    st = stats.get("streaming")
+    if not st:
+        return ""
+    total = st["distribuitor"] + st["digital"] + st["ambele"]
+    titles = ", ".join(st["titluri"])
+    return f"""## Filme de streaming
+
+Populația proiectului sunt filmele lansate în cinema. Unele filme de streaming au avut doar o lansare simbolică în câteva săli (Hillbilly Elegy: buget 45 mil. $, încasări 38.852 $) și ar apărea ca „neprofitabile” fără să fi încercat să recupereze bugetul din bilete. Pasul „streaming” scoate un film doar dacă **ambele** condiții sunt adevărate:
+
+1. distribuitorul principal din infobox e un serviciu de streaming (Netflix, Amazon Studios / Prime Video, Apple TV+, Disney+, Hulu, HBO Max, Max, Paramount+, Peacock) **sau** TMDB are o lansare digitală (tipul 4) la cel mult {STREAMING_DIGITAL_DAYS} de zile după prima lansare în cinema (tipurile 2 și 3);
+2. încasările sunt sub {int(STREAMING_MAX_ROI * 100)}% din buget (ROI < {str(STREAMING_MAX_ROI).replace(".", ",")}).
+
+Criteriul digital se aplică doar filmelor lansate din {STREAMING_DIGITAL_FROM}: înainte nu exista distribuție digitală, iar TMDB are uneori casete sau DVD-uri marcate ca „digital” chiar la data premierei (Eureka, 1983). O lansare digitală *înainte* de cinema (VOD mai întâi, apoi câteva săli) contează și ea.
+
+A doua condiție păstrează filmele de streaming care au rulat cu adevărat în cinema (Manchester by the Sea, distribuit de Amazon Studios).
+
+| Criteriul îndeplinit | Filme scoase |
+|---|---|
+| doar distribuitorul | {_n(st["distribuitor"])} |
+| doar lansarea digitală | {_n(st["digital"])} |
+| amândouă | {_n(st["ambele"])} |
+| **total** | **{_n(total)}** |
+
+Primele {len(st["titluri"])} (după data lansării): {titles}.
+
+Datele de lansare pe tipuri vin din răspunsurile TMDB deja descărcate (`python extraction/tmdb.py --release-dates`). Lipsesc pentru {_n(st["fără date TMDB"])} filme (detaliile TMDB adăugate la manifest nu sunt în arhiva din Releases); la ele contează doar distribuitorul.
+"""
+
+
 def write_report(out: pd.DataFrame, funnel: list, args, stats: dict = None) -> None:
     threshold = args.threshold
     stats = stats or {}
@@ -687,6 +746,7 @@ Generat cu `python extraction/integrate.py --threshold {threshold} --roi-rule {a
 
 {_md_table(funnel)}
 
+{streaming_section(stats)}
 ## Ținta
 
 Un film e **profitabil** dacă încasările sunt de cel puțin {t} ori bugetul (`roi = încasări / buget`).
