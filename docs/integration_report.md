@@ -262,6 +262,15 @@ Media simplă aproape nu are legătură cu ținta; variantele noi au.
 ## Fără informații de după lansare (anti-leakage)
 
 - Premiile și istoricul regizorului/actorilor vin doar din filmele lansate **înainte**.
+- **Franciza** (#47): colecțiile TMDB se creează după ce apare o continuare, iar continuarea se face de obicei pentru că primul film a avut succes. Cu vechea definiție (`is_franchise` = filmul e într-o colecție), primul film al unei serii ar fi purtat informație din viitor:
+
+  | Vechea definiție | Filme | % profitabile |
+  |---|---|---|
+  | nu e în nicio colecție | 14.643 | 26,1% |
+  | primul film dintr-o colecție | 1.653 | 65,5% |
+  | continuare (au apărut deja filme din serie) | 1.602 | 53,3% |
+
+  Acum `is_franchise` = 1 doar pentru continuări, iar `sequel_number` = câte filme din serie au apărut înainte (0 = primul film sau film independent).
 - Am scos keywords ca `amused` sau `suspenseful`: arată cum a reacționat publicul, deci nu se știu înainte de lansare.
 - `vote_average` și `vote_count` rămân în tabel doar pentru experimentul cu leakage.
 - La antrenare, e mai sigur să împărțim filmele după an (vechi = antrenare, noi = test). La o împărțire aleatoare, istoricul unui film vechi ar putea folosi ROI-ul unui film din test.

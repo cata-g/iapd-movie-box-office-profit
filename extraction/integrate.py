@@ -523,6 +523,25 @@ def prev_history(df: pd.DataFrame, col: str, prefix: str, threshold: float) -> p
     return pd.DataFrame(rows, index=df.index)
 
 
+def franchise_features(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """(is_franchise, sequel_number) știute înainte de lansare: câte filme din aceeași colecție
+    TMDB au apărut înainte (0 = primul film sau film independent; gol = poziție necunoscută)."""
+    coll = pd.to_numeric(df["collection_id"], errors="coerce").fillna(0)
+    pos = pd.to_numeric(df["sequel_number"], errors="coerce")
+    prior = (pos - 1).clip(lower=0).where(coll > 0, 0)
+    return (prior >= 1).astype(int), prior.astype("Int64")
+
+
+def franchise_stats(df: pd.DataFrame, threshold: float) -> dict:
+    """% profitabile după vechea definiție (orice film dintr-o colecție), pentru raport."""
+    coll = pd.to_numeric(df["collection_id"], errors="coerce").fillna(0) > 0
+    pos = pd.to_numeric(df["sequel_number"], errors="coerce")
+    prof = df["roi"] >= threshold
+    groups = {"nu e în nicio colecție": ~coll, "primul film dintr-o colecție": coll & (pos == 1),
+              "continuare (au apărut deja filme din serie)": coll & (pos >= 2)}
+    return {k: (int(m.sum()), float(prof[m].mean())) for k, m in groups.items()}
+
+
 def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     out["tmdb_id"] = df["tmdb_id"].astype("Int64")
@@ -586,11 +605,11 @@ def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
     for g in ("us", "europe", "asia", "other"):
         out[f"country_{g}"] = groups.apply(lambda s, g=g: int(g in s))
 
-    # 13–14. Franciză și numărul în serie
-    coll = pd.to_numeric(df["collection_id"], errors="coerce").fillna(0)
-    out["is_franchise"] = (coll > 0).astype(int)
-    seq = pd.to_numeric(df["sequel_number"], errors="coerce")
-    out["sequel_number"] = seq.where(seq.notna() | (coll > 0), 0).astype("Int64")
+    # 13–14. Franciză și numărul în serie. Colecțiile TMDB apar după ce se face o continuare, iar
+    # continuarea se face de obicei pentru că primul film a avut succes: pentru primul film,
+    # „e într-o colecție” e informație din viitor (#47). Contează doar filmele din serie lansate
+    # ÎNAINTE: sequel_number = poziția în colecție (după data lansării) - 1.
+    out["is_franchise"], out["sequel_number"] = franchise_features(df)
 
     # 15. Ecranizare
     kw_based = kws.apply(lambda ws: any(w.startswith("based on") for w in ws))
@@ -841,6 +860,9 @@ def write_report(out: pd.DataFrame, funnel: list, args, stats: dict = None) -> N
                                 "director_prev_profitable_rate", "cast_prev_mean_roi",
                                 "cast_prev_mean_log_roi", "cast_prev_profitable_rate"]])
     budget_rule = "" if args.budget_choice == "prioritate" else f""", dar prin **majoritate**: din fiecare grup independent (tmdb, wikidata, wiki = dbpedia/wikipedia) intră o singură valoare, a sursei celei mai prioritare din grup. Câștigă valoarea cu care sunt de acord (la ±25%) cele mai multe grupuri; la egalitate rămâne ordinea de mai sus. Așa, o greșeală izolată a TMDB nu mai câștigă doar pentru că TMDB e primul (Dragon Ball Super: Broly: TMDB 1 mil. $, Wikidata și Wikipedia 8,5 mil. $). Limită: Wikidata are exact aceeași valoare ca Wikipedia la {_same_share(out, "budget_wd", "budget_wp")} din bugete, deci și „majoritatea” poate fi uneori aceeași informație copiată."""
+    franchise_table = "\n".join(
+        ["  | Vechea definiție | Filme | % profitabile |", "  |---|---|---|"]
+        + [f"  | {k} | {_n(v[0])} | {_pct(v[1])} |" for k, v in stats.get("franchise", {}).items()])
     final_src = _md_table([{"Sursă": k, "Buget": int((out["budget_source"] == k).sum()),
                             "Încasări": int((out["gross_source"] == k).sum())} for k in BUDGET_SOURCES])
 
@@ -916,6 +938,11 @@ Media simplă aproape nu are legătură cu ținta; variantele noi au.
 ## Fără informații de după lansare (anti-leakage)
 
 - Premiile și istoricul regizorului/actorilor vin doar din filmele lansate **înainte**.
+- **Franciza** (#47): colecțiile TMDB se creează după ce apare o continuare, iar continuarea se face de obicei pentru că primul film a avut succes. Cu vechea definiție (`is_franchise` = filmul e într-o colecție), primul film al unei serii ar fi purtat informație din viitor:
+
+{franchise_table}
+
+  Acum `is_franchise` = 1 doar pentru continuări, iar `sequel_number` = câte filme din serie au apărut înainte (0 = primul film sau film independent).
 - Am scos keywords ca `amused` sau `suspenseful`: arată cum a reacționat publicul, deci nu se știu înainte de lansare.
 - `vote_average` și `vote_count` rămân în tabel doar pentru experimentul cu leakage.
 - La antrenare, e mai sigur să împărțim filmele după an (vechi = antrenare, noi = test). La o împărțire aleatoare, istoricul unui film vechi ar putea folosi ROI-ul unui film din test.
@@ -945,6 +972,7 @@ def main() -> None:
              "wp_ambiguous_gross": int((df["gross_wp_note"] == "ambiguous").sum())}
     df = clean(df, funnel, gross_only=count_gross_only(df.index), roi_rule=args.roi_rule,
                budget_choice=args.budget_choice, stats=stats)
+    stats["franchise"] = franchise_stats(df, args.threshold)
     out = features(df, args.threshold)
 
     PROCESSED.mkdir(parents=True, exist_ok=True)
