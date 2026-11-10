@@ -165,6 +165,7 @@ def load_sources(manifest: dict) -> pd.DataFrame:
                      "gross_wd_currency", "is_adaptation", "adaptation_type"]])
     df = df.join(wp[["budget_wp", "gross_wp", "budget_wp_amount", "budget_wp_currency", "budget_wp_note",
                      "budget_wp_range", "gross_wp_amount", "gross_wp_currency", "gross_wp_note",
+                     "budget_wp_misread", "gross_wp_misread",
                      "gross_wp_domestic", "gross_wp_rental", "gross_wp_single_market", "gross_wp_worldwide",
                      "based_on_wp", "distributor_wp"]])
     df = df.join(aw)
@@ -177,7 +178,8 @@ def native_amounts(df: pd.DataFrame) -> pd.DataFrame:
     TMDB e mereu în USD. DBpedia e marcat USD, dar uneori a citit „A$2,417,000” sau
     „MXN$142.3 million” ca dolari americani: când suma DBpedia e chiar prima sumă din
     infobox-ul Wikipedia, iar aceea e în altă monedă (sau într-un simbol ambiguu), DBpedia
-    primește moneda din infobox."""
+    primește moneda din infobox. La fel pentru virgula zecimală (#52): când DBpedia are exact
+    suma citită greșit („13,7 million” ca 137 milioane), primește valoarea corectă din infobox."""
     df["dbp_currency_fixed"] = False
     for kind, dbp_col, tmdb_col in (("budget", "budget_dbp", "budget_tmdb"),
                                     ("gross", "worldwide_gross_dbp", "revenue_tmdb")):
@@ -193,6 +195,12 @@ def native_amounts(df: pd.DataFrame) -> pd.DataFrame:
         df[f"{kind}_dbp_currency"] = np.where(misread, wp_cur, np.where(dbp.notna(), "USD", None))
         df.loc[misread & wp_cur.isna(), f"{kind}_dbp_amount"] = np.nan     # simbol ambiguu: ignorat
         df[f"dbp_{kind}_currency_fixed"] = misread
+
+        wrong = df[f"{kind}_wp_misread"]
+        comma = dbp.notna() & ((dbp - wrong).abs() <= DBP_SAME_AMOUNT * wrong)
+        df.loc[comma, f"{kind}_dbp_amount"] = wp_amount[comma]
+        df.loc[comma, f"{kind}_dbp_currency"] = wp_cur[comma]
+        df[f"dbp_{kind}_comma_fixed"] = comma
     return df
 
 
@@ -585,6 +593,17 @@ def keyword_stats(df: pd.DataFrame, threshold: float) -> dict:
             "stingers": (int(stingers.sum()), float(prof[stingers].mean()))}
 
 
+def comma_stats(df: pd.DataFrame) -> dict:
+    """Sumele din infobox citite altfel datorită virgulei zecimale (#52), în dataset-ul final."""
+    out = {}
+    for kind in ("budget", "gross"):
+        fixed = df[f"{kind}_wp_misread"].notna() & df[f"{kind}_wp_amount"].notna()
+        chosen = fixed & ((df[f"{kind}_source"] == "wikipedia") | df[f"dbp_{kind}_comma_fixed"]
+                          & (df[f"{kind}_source"] == "dbpedia"))
+        out[kind] = (int(fixed.sum()), int(chosen.sum()), int(df[f"dbp_{kind}_comma_fixed"].sum()))
+    return out
+
+
 def franchise_stats(df: pd.DataFrame, threshold: float) -> dict:
     """% profitabile după vechea definiție (orice film dintr-o colecție), pentru raport."""
     coll = pd.to_numeric(df["collection_id"], errors="coerce").fillna(0) > 0
@@ -758,6 +777,10 @@ def currency_section(out: pd.DataFrame, stats: dict) -> str:
         return pd.Series([out.at[i, f"{kind}_{p}_currency"] for i, p in src.items()], index=out.index)
     non_usd = (chosen_currency("budget") != "USD") | (chosen_currency("gross") != "USD")
     us_share = out.loc[non_usd, "country_us"].mean()
+    n_dbp = sum(stats.get("comma", {}).get(k, (0, 0, 0))[2] for k in ("budget", "gross"))
+    comma_dbp_text = (f"DBpedia copiase suma greșită la {_n(n_dbp)} filme și primește valoarea corectată din infobox."
+                      if n_dbp else "DBpedia nu are suma greșită la niciun film (de obicei nu are deloc aceste sume); "
+                                    "dacă ar avea-o, ar primi valoarea corectată din infobox.")
     return f"""## Monede
 
 Bugetul și încasările se iau în moneda în care sunt scrise (`budget_<sursă>_amount`, `budget_<sursă>_currency`, la fel pentru încasări) și se convertesc în USD cu cursul mediu al anului lansării (World Bank, indicatorul `PA.NUS.FCRF`, licență CC BY 4.0; `fx_year`, `budget_fx_rate`, `gross_fx_rate`). Abia apoi se aplică regulile de mai sus: intervalele plauzibile, alegerea prin majoritate, toleranța de ±25% și regula pentru ROI extrem.
@@ -776,6 +799,7 @@ Bugetul și încasările se iau în moneda în care sunt scrise (`budget_<sursă
 Seria World Bank începe în 1960: pentru filmele din 1950–1959 nu folosim alt curs (nu inventăm valori), deci filmele din anii '50 cu sume doar în altă monedă se pierd. Monedele redenominate (Brazilia înainte de 1994, Turcia înainte de 2005) apar în serie în unitatea de azi; anii lor au aproape toți hiperinflație, iar restul cad la verificarea intervalelor plauzibile.
 
 - DBpedia marchează orice sumă ca USD, deși uneori a citit „A$2,417,000” sau „MXN$142.3 million”. Când suma DBpedia e chiar prima sumă din infobox-ul Wikipedia, iar aceea e în altă monedă, DBpedia primește moneda din infobox: {_n(stats.get("dbp_budget_fixed", 0))} bugete și {_n(stats.get("dbp_gross_fixed", 0))} încasări.
+- Virgula zecimală europeană (#52): „€13,7 million” înseamnă 13,7 milioane, nu 137. O virgulă urmată de 1–2 cifre și de o unitate e zecimală; urmată de 3 cifre rămâne separator de mii („1,250 million”). În dataset, {_n(stats.get("comma", {}).get("budget", (0, 0, 0))[0])} bugete și {_n(stats.get("comma", {}).get("gross", (0, 0, 0))[0])} încasări din infobox sunt citite acum corect ({_n(stats.get("comma", {}).get("budget", (0, 0, 0))[1] + stats.get("comma", {}).get("gross", (0, 0, 0))[1])} dintre ele sunt chiar valoarea folosită). {comma_dbp_text}
 - Simboluri ambigue („¥” = JPY sau CNY, „kr” = SEK / NOK / DKK, „Rs”, „$”) se lămuresc după țara de producție din TMDB. Dacă tot rămân ambigue, suma e ignorată: {_n(stats.get("wp_ambiguous_budget", 0))} bugete și {_n(stats.get("wp_ambiguous_gross", 0))} încasări din Wikipedia.
 - Un „$” simplu înseamnă USD, cu o excepție: un film fără SUA printre țările de producție, dar dintr-o țară cu dolar propriu (Australia, Canada, Hong Kong, Noua Zeelandă, Mexic ...), primește moneda acelei țări. Limită: Wikidata are aceeași sumă marcată USD la multe dintre aceste filme, dar și acolo valorile sunt adesea importate automat din infobox, deci nu e o confirmare independentă.
 - Limită: cursul e media anului lansării; bugetul se cheltuie de obicei cu 1–2 ani înainte, iar încasările vin în anul lansării și după.
@@ -1096,6 +1120,7 @@ def main() -> None:
     df = clean(df, funnel, gross_only=count_gross_only(df.index), roi_rule=args.roi_rule,
                budget_choice=args.budget_choice, stats=stats)
     stats["franchise"] = franchise_stats(df, args.threshold)
+    stats["comma"] = comma_stats(df)
     stats["prev_recent"] = recent_prior_count(df)
     stats["gross_currency"] = df["_gross_currency"].reset_index(drop=True)
     stats["keywords"] = keyword_stats(df, args.threshold)

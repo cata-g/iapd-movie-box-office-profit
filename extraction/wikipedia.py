@@ -108,7 +108,7 @@ SUFFIXES = {
     "naira": "NGN", "lei": "RON", "forint": "HUF", "Ft": "HUF", "Kč": "CZK", "KČs": "CSK", "Kčs": "CSK",
     "złoty": "PLN", "zł": "PLN", "zl": "PLN", "dirhams": "MAD", "shekels": "ILS", "NIS": "ILS",
     "đồng": "VND", "dong": "VND", "taka": "BDT", "tenge": "KZT", "rand": "ZAR", "hryvnias": "UAH",
-    "L.E": "EGP", "LE": "EGP", "dollars": "DOLLAR?", "US dollars": "USD",
+    "L.E": "EGP", "LE": "EGP", "dollars": "DOLLAR?", "US dollars": "USD", "$": "DOLLAR?",   # „0,3 million $”
 }
 # Marcaj ambiguu -> {țara de producție (TMDB): monedă}
 AMBIGUOUS = {
@@ -137,9 +137,10 @@ SYMBOL_TEMPLATES = {"£": "£", "€": "€", "¥": "¥", "₹": "₹", "A$": "A
 CONVERT_UNITS = {"k": "thousand", "l": "lakh", "c": "crore", "m": "million", "b": "billion", "lc": "lakh crore"}
 
 NUM = r"\d{1,3}(?:(?:[   ]\d{3})+(?!\d)|(?:\.\d{3}){2,}(?:,\d+)?(?!\d))|\d[\d,]*(?:\.\d+)?"
-UNIT = r"(?:\s*((?i:million|billion|mil\b\.?|m\b|bn\b|crores?|lakhs?|lacs?|thousand)))?"
+UNIT = r"(?:\s*((?i:millions?|millones|billions?|mil\b\.?|mio\b\.?|mln\b|mn\b|m\b|bn\b|crores?|lakhs?|lacs?|thousand)))?"
 SEP = r"\s*(?:–|—|-|to)\s*"
-MULT = {"million": 1e6, "mil": 1e6, "mil.": 1e6, "m": 1e6, "billion": 1e9, "bn": 1e9, "thousand": 1e3,
+MULT = {"million": 1e6, "millions": 1e6, "millones": 1e6, "mil": 1e6, "mil.": 1e6, "mio": 1e6, "mio.": 1e6,
+        "mln": 1e6, "mn": 1e6, "m": 1e6, "billion": 1e9, "billions": 1e9, "bn": 1e9, "thousand": 1e3,
         "crore": 1e7, "crores": 1e7, "lakh": 1e5, "lakhs": 1e5, "lac": 1e5, "lacs": 1e5}
 
 
@@ -170,6 +171,7 @@ class Money(NamedTuple):
     is_range: bool = False
     usd: float | None = None      # suma în USD scrisă în infobox (aceeași sumă sau una în paranteză)
     note: str = ""                # "ambiguous" / "unknown" când suma e ignorată
+    misread: float | None = None  # cum ar fi fost citită fără regula virgulei zecimale („13,7 million” -> 137e6)
 
 
 def _code(marker: str | None, table: dict) -> str | None:
@@ -198,21 +200,25 @@ def resolve_currency(code: str, countries=()) -> str | None:
     return found.pop() if len(found) == 1 else None
 
 
-def _num(t: str) -> float:
-    t = t.replace(" ", " ").replace(" ", " ")
+def _num(t: str, unit: str = "") -> float:
+    """Numărul din text. O virgulă urmată de 1–2 cifre și apoi de o unitate e zecimală
+    (#52): „13,7 million” -> 13,7; urmată de 3 cifre rămâne separator de mii: „1,250 million”."""
+    t = t.replace("\u00a0", " ").replace("\u202f", " ")
     if re.fullmatch(r"\d{1,3}(?:\.\d{3}){2,}(?:,\d+)?", t):      # 21.074.048,58
         return float(t.replace(".", "").replace(",", "."))
+    if unit and re.fullmatch(r"\d+,\d{1,2}", t):                   # 13,7 million
+        return float(t.replace(",", "."))
     return float(t.replace(",", "").replace(" ", ""))
 
 
-def _value(m: re.Match) -> tuple[float | None, bool]:
+def _value(m: re.Match, decimal_comma: bool = True) -> tuple[float | None, bool]:
     n1, u1, n2, u2 = m.group("n1", "u1", "n2", "u2")
     u1, u2 = (u1 or "").strip().lower(), (u2 or "").strip().lower()
     u1, u2 = u1 or u2, u2 or u1
-    v1 = _num(n1) * MULT.get(u1, 1)
+    v1 = _num(n1, u1 if decimal_comma else "") * MULT.get(u1, 1)
     if n2 is None:
         return v1, False
-    v2 = _num(n2) * MULT.get(u2, 1)
+    v2 = _num(n2, u2 if decimal_comma else "") * MULT.get(u2, 1)
     if v2 < v1:  # "$5–6" where the unit belongs to both but got lost, or a typo
         return None, False
     return (v1 + v2) / 2, True
@@ -306,11 +312,13 @@ def parse_money(raw: str | None, countries=()) -> Money:
     value, is_range = _value(m)
     if value is None:
         return Money(None, None)
+    old = _value(m, decimal_comma=False)[0]
+    misread = old if old is not None and old != value else None
     currency = resolve_currency(code, countries)
     if currency is None:
-        return Money(value, None, is_range, note="ambiguous")
+        return Money(value, None, is_range, note="ambiguous", misread=misread)
     usd = value if currency == "USD" else _explicit_usd(s[m.end():])
-    return Money(value, currency, is_range, usd)
+    return Money(value, currency, is_range, usd, misread=misread)
 
 
 def clean(raw: str) -> str:
@@ -488,6 +496,7 @@ def build(films: pd.DataFrame) -> pd.DataFrame:
             "budget_wp_amount": budget.amount, "budget_wp_currency": budget.currency,
             "gross_wp_amount": gross.amount, "gross_wp_currency": gross.currency,
             "budget_wp_note": budget.note or None, "gross_wp_note": gross.note or None,
+            "budget_wp_misread": budget.misread, "gross_wp_misread": gross.misread,
             **{f"gross_wp_{k}": v for k, v in gross_scope(gross_raw)._asdict().items()},
             "budget_wp_other_currency": budget.currency not in (None, "USD"),
             "gross_wp_other_currency": gross.currency not in (None, "USD"),
@@ -524,6 +533,8 @@ def report(df: pd.DataFrame) -> str:
         f"  bugete noi în USD adăugate de Wikipedia: {new['budget_wp'].notna().sum()} "
         f"(din care intervale: {(new['budget_wp'].notna() & new['budget_wp_range']).sum()})",
         f"  buget doar în altă monedă: {new['budget_wp_other_currency'].sum()}",
+        f"Virgulă zecimală (#52): {df['budget_wp_misread'].notna().sum()} bugete și "
+        f"{df['gross_wp_misread'].notna().sum()} încasări citite altfel decât înainte",
         f"Încasări doar SUA/Canada: {df['gross_wp_domestic'].sum()}; o singură piață: "
         f"{df['gross_wp_single_market'].sum()}; rentals: {df['gross_wp_rental'].sum()}; worldwide: {df['gross_wp_worldwide'].sum()}",
         f"Cu distribuitor în infobox: {df['distributor_wp'].notna().sum()} "

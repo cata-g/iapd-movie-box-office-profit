@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from extraction.wikipedia import gross_scope, infobox_field, parse_money, parse_names
+from extraction.wikipedia import MULT, _num, gross_scope, infobox_field, parse_money, parse_names
 
 # raw infobox value -> (amount, currency, is_range, usd)   (usd = suma în USD scrisă în infobox)
 CASES = {
@@ -53,6 +53,15 @@ CASES = {
     # într-o listă, elementul „worldwide” e cel bun
     "{{Plainlist| * {{JPY|1.5 billion}} (Japan) * {{US$|14.7 million|long=no}} (worldwide)}}":
         (14.7e6, "USD", False, 14.7e6),
+    # virgula zecimală europeană (#52): 1–2 cifre după virgulă și apoi o unitate = zecimale
+    "€13,7 million": (13.7e6, "EUR", False, None),
+    "$4,5 million": (4.5e6, "USD", False, 4.5e6),
+    "0,3 million $": (0.3e6, "USD", False, 0.3e6),
+    "11,6 million guilders": (11.6e6, "NLG", False, None),
+    "[[United States dollar|US$]]8,7 million": (8.7e6, "USD", False, 8.7e6),
+    "€2,35 Mio.": (2.35e6, "EUR", False, None),
+    "US$1,250 million": (1.25e9, "USD", False, 1.25e9),   # 3 cifre = separator de mii
+    "$4,500,000": (4.5e6, "USD", False, 4.5e6),
     "": (None, None, False, None),
 }
 
@@ -79,6 +88,16 @@ def test_parse_money():
         got = (m.amount, m.currency, m.is_range, m.usd)
         assert got == expected, f"{raw!r}: expected {expected}, got {got}"
     print(f"Test 1 passed: {len(CASES)} formate de sume parsate corect.")
+
+
+def test_decimal_comma():
+    assert parse_money("€13,7 million").misread == 137e6        # cum citea parserul vechi
+    assert _num("1,250", "million") * MULT["million"] == 1.25e9  # „1,250 million”: separator de mii
+    assert _num("13,7", "million") * MULT["million"] == 13.7e6   # „13,7 million”: zecimală
+    assert _num("4,500,000") == 4.5e6
+    assert parse_money("$1,250 million").amount == 1.25e9
+    assert parse_money("$4,500,000").misread is None            # citire neschimbată
+    print("Test 6 passed: virgula zecimală vs. separatorul de mii.")
 
 
 def test_ambiguous():
@@ -138,4 +157,5 @@ if __name__ == "__main__":
     test_infobox_field()
     test_parse_names()
     test_gross_scope()
+    test_decimal_comma()
     print("\nToate testele au trecut.")
