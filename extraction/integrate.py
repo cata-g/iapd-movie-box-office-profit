@@ -457,6 +457,13 @@ def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "
     df["gross_is_local_currency"] = (g_cur != "USD") & ~df["gross_is_single_market"] & ~labelled_ww
     df["_gross_currency"] = g_cur
 
+    # Valori de umplutură (#49): aceeași sursă scrie exact aceeași sumă la buget și la încasări
+    # (un lot de filme din TMDB are 10.000 $ / 10.000 $). Egalitatea între surse diferite e
+    # posibilă (filme vechi cu „rentals” rotunjite egale cu bugetul) și nu se scoate.
+    placeholder = (df["budget_source"] == df["gross_source"]) & np.isclose(df["budget"], df["worldwide_gross"])
+    step("valori identice", ~placeholder,
+         "aceeași sursă dă exact aceeași sumă pentru buget și încasări (valoare de umplutură, ROI = 1)")
+
     df["release_date"] = pd.to_datetime(df["release_date"], errors="coerce")
     step("dată lansare", df["release_date"].notna(),
          "fără dată de lansare în TMDB")
