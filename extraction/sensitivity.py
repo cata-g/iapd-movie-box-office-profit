@@ -3,7 +3,7 @@ Test de sensibilitate (#45): cât de mult depinde ținta `profitable` de decizii
 
 Refolosește funcțiile din integrate.py (aceleași date din data/interim/, fără cereri HTTP) și
 schimbă câte o singură decizie față de varianta implicită:
-  - alegerea bugetului: majoritate (implicit) / prioritate TMDB → DBpedia → Wikidata → Wikipedia /
+  - alegerea bugetului: majoritate (implicit) / majoritate fără mediană (#52) / prioritate TMDB → DBpedia → Wikidata → Wikipedia /
     prioritate cu Wikipedia prima
   - alegerea încasărilor: prioritatea curentă (Wikipedia prima) / TMDB prima
   - --roi-rule: vechi / surse-independente / roi-recalculat (implicit)
@@ -31,7 +31,7 @@ from extraction.utils import PROJECT_ROOT
 
 REPORT = PROJECT_ROOT / "docs" / "sensitivity_report.md"
 DEFAULT = {"budget_choice": "majoritate", "budget_sources": BUDGET_SOURCES, "gross_sources": GROSS_SOURCES,
-           "roi_rule": "roi-recalculat", "threshold": 2.5, "drop_partial_gross": 0}
+           "roi_rule": "roi-recalculat", "threshold": 2.5, "drop_partial_gross": 0, "median": True}
 
 
 def _order(sources: dict, first: str) -> dict:
@@ -41,6 +41,7 @@ def _order(sources: dict, first: str) -> dict:
 VARIANTS = [
     # (grup, nume, schimbarea față de DEFAULT)
     ("Buget", "majoritate (implicit)", {}),
+    ("Buget", "majoritate fără mediană (vechi)", {"median": False}),
     ("Buget", "prioritate tmdb → dbpedia → wikidata → wikipedia", {"budget_choice": "prioritate"}),
     ("Buget", "prioritate wikipedia → tmdb → dbpedia → wikidata",
      {"budget_choice": "prioritate", "budget_sources": _order(BUDGET_SOURCES, "wikipedia")}),
@@ -61,7 +62,8 @@ VARIANTS = [
 def run(base: pd.DataFrame, fx: dict, cfg: dict) -> pd.DataFrame:
     """`profitable` (și dacă sursele sunt în dezacord) pentru filmele care trec curățarea."""
     df = clean(base.copy(), [], roi_rule=cfg["roi_rule"], budget_choice=cfg["budget_choice"],
-               budget_sources=cfg["budget_sources"], gross_sources=cfg["gross_sources"], fx=fx, stats={})
+               budget_sources=cfg["budget_sources"], gross_sources=cfg["gross_sources"], fx=fx, stats={},
+               median=cfg["median"])
     if cfg["drop_partial_gross"] >= 1:
         df = df[~(df["gross_is_single_market"] | df["gross_is_rental"])]
     if cfg["drop_partial_gross"] >= 2:

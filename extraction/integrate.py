@@ -264,14 +264,17 @@ def _close(a, b) -> bool:
     return 1 / CONFLICT_RATIO <= a / b <= CONFLICT_RATIO
 
 
-def majority_choice(vals: pd.DataFrame) -> pd.Series:
-    """Sursa aleasă prin majoritate, pentru fiecare film. `vals` are coloanele în ordinea
-    de prioritate. Din fiecare grup SOURCE_GROUP intră un reprezentant: sursa grupului cu
-    cea mai mare prioritate. Sprijinul unui reprezentant = câți reprezentanți (inclusiv el)
-    sunt la ±25% de el. Rămâne sursa prioritară dacă are sprijinul maxim; altfel, cea mai
-    prioritară sursă cu sprijin maxim."""
+def majority_choice(vals: pd.DataFrame, median: bool = True) -> tuple[pd.Series, pd.Series]:
+    """Sursa aleasă prin majoritate, pentru fiecare film, și dacă a decis mediana. `vals` are
+    coloanele în ordinea de prioritate. Din fiecare grup SOURCE_GROUP intră un reprezentant:
+    sursa grupului cu cea mai mare prioritate. Sprijinul unui reprezentant = câți reprezentanți
+    (inclusiv el) sunt la ±25% de el. Rămâne sursa prioritară dacă are sprijinul maxim; altfel,
+    cea mai prioritară sursă cu sprijin maxim.
+    Cu median=True (#52): când sunt cel puțin 3 reprezentanți și toți se contrazic (sprijin
+    maxim 1), câștigă reprezentantul cu valoarea din mijloc, nu cel mai prioritar. Cu 2
+    reprezentanți în dezacord decide în continuare prioritatea."""
     names = list(vals.columns)
-    chosen = []
+    chosen, by_median = [], []
     for row in vals.to_numpy(dtype=float):
         reps, seen = [], set()
         for name, v in zip(names, row):
@@ -280,18 +283,28 @@ def majority_choice(vals: pd.DataFrame) -> pd.Series:
                 reps.append((name, v))
         if not reps:
             chosen.append(None)
+            by_median.append(False)
             continue
         support = [sum(_close(v, w) for _, w in reps) for _, v in reps]
+        if median and len(reps) >= 3 and max(support) == 1:
+            ordered = sorted(reps, key=lambda r: r[1])
+            chosen.append(ordered[(len(ordered) - 1) // 2][0])  # valoarea din mijloc
+            by_median.append(True)
+            continue
         chosen.append(reps[support.index(max(support))][0])   # primul cu maxim = cel mai prioritar
-    return pd.Series(chosen, index=vals.index, dtype=object)
+        by_median.append(False)
+    return (pd.Series(chosen, index=vals.index, dtype=object),
+            pd.Series(by_median, index=vals.index, dtype=bool))
 
 
-def choose_value(df: pd.DataFrame, sources: dict, prefix: str, majority: bool = False) -> pd.DataFrame:
+def choose_value(df: pd.DataFrame, sources: dict, prefix: str, majority: bool = False,
+                 median: bool = True) -> pd.DataFrame:
     """Valoarea finală `prefix` și sursa ei. `sources` = {sursă: coloană} în ordinea de prioritate;
     cu majority=True, sursa vine din majority_choice (doar pentru buget)."""
     vals = pd.DataFrame({name: df[col] for name, col in sources.items()})
+    df[f"_{prefix}_by_median"] = False
     if majority:
-        first = majority_choice(vals)
+        first, df[f"_{prefix}_by_median"] = majority_choice(vals, median)
     else:
         first = vals.notna().idxmax(axis=1).where(vals.notna().any(axis=1))
     df[prefix] = [vals.at[i, s] if isinstance(s, str) else np.nan for i, s in zip(vals.index, first)]
@@ -380,7 +393,8 @@ def count_gross_only(manifest) -> int:
 
 def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "roi-recalculat",
           budget_choice: str = "majoritate", budget_sources: dict = None,
-          gross_sources: dict = None, fx: dict = None, stats: dict = None) -> pd.DataFrame:
+          gross_sources: dict = None, fx: dict = None, stats: dict = None,
+          median: bool = True) -> pd.DataFrame:
     budget_sources = budget_sources or BUDGET_SOURCES
     gross_sources = gross_sources or GROSS_SOURCES
     fx = load_fx() if fx is None else fx
@@ -412,7 +426,7 @@ def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "
     for col in gross_sources.values():
         df[col] = _plausible(df[col], *GROSS_RANGE)
 
-    df = choose_value(df, budget_sources, "budget", majority=budget_choice == "majoritate")
+    df = choose_value(df, budget_sources, "budget", majority=budget_choice == "majoritate", median=median)
     df = choose_value(df, gross_sources, "worldwide_gross")
     df = df.rename(columns={f"{p}worldwide_gross_{k}": f"{p}gross_{k}" for p in ("", "_")
                             for k in ("source", "n_sources", "conflict", "n_agree", "n_agree_raw")})
@@ -1001,7 +1015,7 @@ def write_report(out: pd.DataFrame, funnel: list, args, stats: dict = None) -> N
                       for c in ["director_prev_mean_roi", "director_prev_mean_log_roi",
                                 "director_prev_profitable_rate", "cast_prev_mean_roi",
                                 "cast_prev_mean_log_roi", "cast_prev_profitable_rate"]])
-    budget_rule = "" if args.budget_choice == "prioritate" else f""", dar prin **majoritate**: din fiecare grup independent (tmdb, wikidata, wiki = dbpedia/wikipedia) intră o singură valoare, a sursei celei mai prioritare din grup. Câștigă valoarea cu care sunt de acord (la ±25%) cele mai multe grupuri; la egalitate rămâne ordinea de mai sus. Așa, o greșeală izolată a TMDB nu mai câștigă doar pentru că TMDB e primul (Dragon Ball Super: Broly: TMDB 1 mil. $, Wikidata și Wikipedia 8,5 mil. $). Limită: Wikidata are exact aceeași valoare ca Wikipedia la {_same_share(out, "budget_wd", "budget_wp")} din bugete, deci și „majoritatea” poate fi uneori aceeași informație copiată."""
+    budget_rule = "" if args.budget_choice == "prioritate" else f""", dar prin **majoritate**: din fiecare grup independent (tmdb, wikidata, wiki = dbpedia/wikipedia) intră o singură valoare, a sursei celei mai prioritare din grup. Câștigă valoarea cu care sunt de acord (la ±25%) cele mai multe grupuri; la egalitate rămâne ordinea de mai sus. Așa, o greșeală izolată a TMDB nu mai câștigă doar pentru că TMDB e primul (Dragon Ball Super: Broly: TMDB 1 mil. $, Wikidata și Wikipedia 8,5 mil. $). Când toate cele 3 grupuri se contrazic (niciunul la ±25% de altul), câștigă valoarea din mijloc, nu sursa prioritară (#52): {_n(stats.get("budget_median", 0))} filme au bugetul ales prin mediană (3 Idiots: TMDB 50 mil. $, Wikipedia 11,4 mil. $, Wikidata 7,2 mil. $ → 11,4 mil. $). Limită: Wikidata are exact aceeași valoare ca Wikipedia la {_same_share(out, "budget_wd", "budget_wp")} din bugete, deci și „majoritatea” poate fi uneori aceeași informație copiată."""
     kw = stats.get("keywords", {"corr_votes": 0, "corr_profitable": 0, "none": (0, 0), "stingers": (0, 0)})
     franchise_table = "\n".join(
         ["  | Vechea definiție | Filme | % profitabile |", "  |---|---|---|"]
@@ -1121,6 +1135,7 @@ def main() -> None:
                budget_choice=args.budget_choice, stats=stats)
     stats["franchise"] = franchise_stats(df, args.threshold)
     stats["comma"] = comma_stats(df)
+    stats["budget_median"] = int(df["_budget_by_median"].sum())
     stats["prev_recent"] = recent_prior_count(df)
     stats["gross_currency"] = df["_gross_currency"].reset_index(drop=True)
     stats["keywords"] = keyword_stats(df, args.threshold)
