@@ -296,6 +296,11 @@ Câteva filme au un ROI uriaș (Paranormal Activity: 12.947), deși la jumătate
 
 Media simplă aproape nu are legătură cu ținta; variantele noi au.
 
+## Limite de care trebuie să țină cont modelarea
+
+- **Selecție după popularitate.** Lista de bază din TMDB cere cel puțin 5 voturi, adunate după lansare: 17.624 din 17.861 filme au intrat așa. Dataset-ul conține deci filme care „au fost observate”, iar profitabilitatea crește cu popularitatea: 22,1% profitabile sub 20 de voturi, 55,3% peste 1.000. Fără descărcări noi nu se poate corecta. Concluziile sunt valabile pentru filmele cunoscute, nu pentru toată producția.
+- **COVID (2020–2021).** Piața cinematografelor s-a prăbușit: 19,6% profitabile în 2020–2021, față de 35,0% în 2017–2019 și 28,3% în 2022–2024. La o împărțire după an, setul de test ar conține tocmai acești ani atipici. Recomandare: un indicator pentru 2020–2021 sau acești ani raportați separat.
+
 ## Fără informații de după lansare (anti-leakage)
 
 - Premiile și istoricul regizorului/actorilor vin doar din filmele lansate **înainte**. Pentru istoricul ROI, filmul anterior trebuie lansat cu cel puțin 6 luni înainte (#49): încasările unui film abia lansat nu sunt încă cunoscute. Înainte de această regulă, 484 filme foloseau ROI-ul unui film al regizorului lansat cu mai puțin de 6 luni în urmă.
