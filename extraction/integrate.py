@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from extraction.columns import categories, feature_columns
 from extraction.utils import (BUDGET_RANGE, GROSS_RANGE, PROJECT_ROOT,
                               YEAR_MAX, YEAR_MIN)
 
@@ -747,6 +748,43 @@ Față de `major_studio`, {_n(only_dist)} filme trec în clasa „mare studio”
 """
 
 
+def meta_section(out: pd.DataFrame) -> str:
+    def by(col: str, label: str) -> str:
+        g = out.groupby(col)["profitable"].agg(["size", "mean"])
+        return _md_table([{label: k, "Filme": int(r["size"]), "% profitabile": _pct(r["mean"])}
+                          for k, r in g.iterrows()])
+
+    meta = [c for c in out.columns if categories(c) == ["META"]]
+    numeric = [c for c in meta if pd.api.types.is_numeric_dtype(out[c]) and out[c].nunique() > 1]
+    corr = sorted(((c, out[c].astype(float).corr(out["profitable"])) for c in numeric),
+                  key=lambda kv: -abs(kv[1]))
+    corr_table = _md_table([{"Coloană": f"`{c}`", "Corelație cu `profitable`": f"{v:.3f}".replace(".", ",")}
+                            for c, v in corr])
+    n_features = len(feature_columns(out))
+    return f"""## De ce excludem coloanele META
+
+`extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; în model intră doar cele {n_features} din FEATURES (`feature_columns(df)`), iar `extraction/test_columns.py` verifică asta pe CSV. META sunt cele {len(meta)} coloane despre **date**, nu despre film: sursa valorii, câte surse au o valoare și câte sunt de acord, sumele brute, monedele și cursurile. Ele prezic ținta, pentru că un film cu încasări raportate peste tot e de obicei un film cunoscut, care a mers bine:
+
+**% profitabile după numărul de surse cu încasări**
+
+{by("gross_n_sources", "Surse cu încasări")}
+
+**% profitabile după sursa bugetului ales**
+
+{by("budget_source", "Sursa bugetului")}
+
+**% profitabile după sursa încasărilor alese**
+
+{by("gross_source", "Sursa încasărilor")}
+
+**Corelația coloanelor META numerice cu `profitable`**
+
+{corr_table}
+
+La predicție, pentru un film care nu a fost încă lansat, nu știm câte surse îi vor raporta încasările. Un model care le folosește ar învăța „filmul e documentat bine”, nu „filmul va fi profitabil”.
+"""
+
+
 def write_report(out: pd.DataFrame, funnel: list, args, stats: dict = None) -> None:
     threshold = args.threshold
     stats = stats or {}
@@ -821,6 +859,7 @@ DBpedia copiază infobox-ul Wikipedia (valori identice la {_same_share(out, "bud
 
 {currency_section(out, stats)}
 {studio_section(out)}
+{meta_section(out)}
 ## Date lipsă
 
 {missing}

@@ -143,6 +143,70 @@ Față de `major_studio`, 2.351 filme trec în clasa „mare studio” doar prin
 
 `budget_is_range` = 1 la 888 filme (5,0%): bugetul final e mijlocul unui interval din infobox („$10–15 million”). E o coloană despre calitatea datelor, nu o caracteristică pentru model.
 
+## De ce excludem coloanele META
+
+`extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; în model intră doar cele 79 din FEATURES (`feature_columns(df)`), iar `extraction/test_columns.py` verifică asta pe CSV. META sunt cele 37 coloane despre **date**, nu despre film: sursa valorii, câte surse au o valoare și câte sunt de acord, sumele brute, monedele și cursurile. Ele prezic ținta, pentru că un film cu încasări raportate peste tot e de obicei un film cunoscut, care a mers bine:
+
+**% profitabile după numărul de surse cu încasări**
+
+| Surse cu încasări | Filme | % profitabile |
+|---|---|---|
+| 1 | 3.287 | 26,9% |
+| 2 | 4.565 | 23,8% |
+| 3 | 7.283 | 30,1% |
+| 4 | 2.776 | 57,6% |
+
+**% profitabile după sursa bugetului ales**
+
+| Sursa bugetului | Filme | % profitabile |
+|---|---|---|
+| dbpedia | 3.373 | 19,9% |
+| tmdb | 12.039 | 36,1% |
+| wikidata | 482 | 26,1% |
+| wikipedia | 2.017 | 31,1% |
+
+**% profitabile după sursa încasărilor alese**
+
+| Sursa încasărilor | Filme | % profitabile |
+|---|---|---|
+| dbpedia | 54 | 33,3% |
+| tmdb | 1.449 | 19,0% |
+| wikidata | 249 | 21,3% |
+| wikipedia | 16.159 | 33,5% |
+
+**Corelația coloanelor META numerice cu `profitable`**
+
+| Coloană | Corelație cu `profitable` |
+|---|---|
+| `gross_wd` | 0,370 |
+| `worldwide_gross_dbp` | 0,351 |
+| `gross_dbp_amount` | 0,350 |
+| `revenue_tmdb` | 0,327 |
+| `gross_tmdb_amount` | 0,326 |
+| `gross_wp` | 0,318 |
+| `gross_n_agree` | 0,223 |
+| `budget_n_agree` | 0,191 |
+| `gross_n_sources` | 0,179 |
+| `budget_n_sources` | 0,162 |
+| `gross_wd_amount` | 0,089 |
+| `budget_wd` | 0,083 |
+| `fx_year` | -0,071 |
+| `budget_wp` | 0,065 |
+| `budget_dbp` | 0,061 |
+| `budget_is_range` | 0,056 |
+| `budget_dbp_amount` | 0,056 |
+| `budget_tmdb_amount` | 0,047 |
+| `budget_tmdb` | 0,047 |
+| `budget_conflict` | 0,045 |
+| `gross_fx_rate` | 0,041 |
+| `gross_conflict` | 0,035 |
+| `gross_wp_amount` | 0,024 |
+| `budget_fx_rate` | 0,021 |
+| `budget_wp_amount` | 0,005 |
+| `budget_wd_amount` | -0,003 |
+
+La predicție, pentru un film care nu a fost încă lansat, nu știm câte surse îi vor raporta încasările. Un model care le folosește ar învăța „filmul e documentat bine”, nu „filmul va fi profitabil”.
+
 ## Date lipsă
 
 | Coloană | Lipsesc | % |
