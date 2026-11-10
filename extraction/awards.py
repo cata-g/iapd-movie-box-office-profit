@@ -16,6 +16,10 @@ Pipeline:
      statement's P585, else the ceremony's date (P805 -> P585). Undated statements are dropped.
   4. Per film: count, per role, the events dated strictly before the release date.
      A win also counts as a nomination. Every manifest film gets a row; 0 = no award before.
+  5. Films outside the manifest whose budget exists only in another currency (Wikidata or
+     Wikipedia, #45) also get a row. Wikidata is queried only for the people of manifest films
+     (same batches -> cache hits); a person seen only in these films is not looked up and is
+     counted in *_not_looked_up (their awards stay 0).
 """
 
 import argparse
@@ -63,12 +67,29 @@ def _batched(template: str, values: list[str], label: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Inputs
 # ---------------------------------------------------------------------------
+def other_currency_films() -> pd.DataFrame:
+    """Filmele cu buget doar în altă monedă (Wikidata / Wikipedia), aceeași regulă ca în integrate.py."""
+    ids = set()
+    for file, p in (("wikidata.parquet", "wd"), ("wikipedia.parquet", "wp")):
+        cols = ["imdb_id", f"budget_{p}_amount", f"budget_{p}_currency"]
+        src = pd.read_parquet(INTERIM / file, columns=cols)
+        ids |= set(src.loc[src[cols[2]].notna() & (src[cols[1]] > 0), "imdb_id"].dropna())
+    wd = pd.read_parquet(INTERIM / "wikidata.parquet", columns=["imdb_id", "year"]).drop_duplicates("imdb_id")
+    return wd[wd["imdb_id"].isin(ids)]
+
+
 def load_films(only: list[str] | None = None) -> pd.DataFrame:
-    """Manifest films with release date and TMDB credits (one row per imdb_id)."""
+    """Manifest films (in_manifest = True) and films with a budget only in another currency,
+    with release date and TMDB credits (one row per imdb_id)."""
     manifest = json.loads((INTERIM / "movies_manifest.json").read_text(encoding="utf-8"))
-    films = pd.DataFrame([{"imdb_id": k, "year": v.get("year")} for k, v in manifest.items() if k])
+    films = pd.DataFrame([{"imdb_id": k, "year": v.get("year"), "in_manifest": True}
+                          for k, v in manifest.items() if k])
     if only:
         films = films[films["imdb_id"].isin(only)]
+    else:
+        extra = other_currency_films()
+        extra = extra[~extra["imdb_id"].isin(films["imdb_id"])].assign(in_manifest=False)
+        films = pd.concat([films, extra], ignore_index=True)
 
     tmdb = pd.concat([pd.read_parquet(INTERIM / f) for f in ["tmdb_movies.parquet", "tmdb_extra.parquet"]
                       if (INTERIM / f).exists()])
@@ -172,7 +193,10 @@ def build(only: list[str] | None = None) -> pd.DataFrame:
     credits = pd.concat(credits, ignore_index=True)
     credits["person"] = credits["person"].astype(int)
 
-    people = people_to_wikidata(credits["person"].unique().tolist())
+    # Doar persoanele din filmele manifestului: aceleași loturi ca la prima rulare -> din cache
+    looked_up = set(credits.loc[credits["imdb_id"].isin(films.loc[films["in_manifest"], "imdb_id"]), "person"])
+    credits["looked_up"] = credits["person"].isin(looked_up)
+    people = people_to_wikidata(sorted(looked_up))
     credits = credits.merge(people, on="person", how="left")
     log.info("People: %d unique, found in Wikidata: %d", credits["person"].nunique(), len(people))
 
@@ -189,8 +213,10 @@ def build(only: list[str] | None = None) -> pd.DataFrame:
                 out[f"{role}_{ceremony}_{suffix}_before"] = s.reindex(out.index).fillna(0).astype(int)
         found = credits[credits["role"] == role].groupby("imdb_id")["wikidata_id"].count()
         total = credits[credits["role"] == role].groupby("imdb_id")["person"].count()
+        missing = credits[(credits["role"] == role) & ~credits["looked_up"]].groupby("imdb_id")["person"].count()
         out[f"{role}_found_wd"] = found.reindex(out.index).fillna(0).astype(int)
         out[f"{role}_n"] = total.reindex(out.index).fillna(0).astype(int)
+        out[f"{role}_not_looked_up"] = missing.reindex(out.index).fillna(0).astype(int)
     return out.reset_index()
 
 
@@ -200,8 +226,10 @@ def report(df: pd.DataFrame) -> str:
     any_oscar = (df["director_oscar_noms_before"] + df["cast_oscar_noms_before"]) > 0
     decades = pd.Series(any_oscar.values, index=(pd.Series(year) // 10 * 10).values).groupby(level=0).mean()
     people = df[["director_n", "cast_n", "director_found_wd", "cast_found_wd"]].sum()
+    not_looked = (df["director_not_looked_up"] + df["cast_not_looked_up"]) > 0
     return "\n".join([
         f"Filme: {len(df)} (cu regizor în TMDB: {(df['director_n'] > 0).sum()}, cu actori: {(df['cast_n'] > 0).sum()})",
+        f"Filme cu persoane necăutate în Wikidata (doar în filmele din afara manifestului): {not_looked.sum()}",
         f"Persoane găsite în Wikidata (pe credite): regizori {people['director_found_wd'] / people['director_n']:.1%}, "
         f"actori {people['cast_found_wd'] / people['cast_n']:.1%}",
         f"Filme cu regizor nominalizat la Oscar înainte: {(df['director_oscar_noms_before'] > 0).sum()}, "

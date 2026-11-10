@@ -13,7 +13,9 @@ Pipeline:
      A period that still times out is split again (quarters, then months).
   2. Details in batches of QIDs: every P577 (earliest = release date), P2130 and P2142
      with their currency, P2142's "valid in place" qualifier, P144, P4947 (tmdb_id).
-  3. Amounts are kept only in USD (wd:Q4917); other currencies are counted, not converted.
+  3. budget_wd / gross_wd: the amount in USD (wd:Q4917). budget_wd_amount / budget_wd_currency:
+     the amount in its own currency (ISO code from CURRENCY_CODES), converted later by
+     integrate.py; a currency item missing from CURRENCY_CODES stays in *_other_currency.
      Box office counts as worldwide when it has no place qualifier or place = worldwide.
   4. Adaptation category (book, comics, tv, video_game, stage, film, true_story...) from
      the type of the source work (P144 -> P31), queried only for adaptations.
@@ -164,16 +166,41 @@ def fetch_details(qids: list[str]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["wikidata_id", "kind", "amount", "unit", "place", "value"])
 
 
+# Elementul Wikidata al monedei -> cod ISO. Monedele rare au fost verificate pe aceleași filme
+# (simbolul din infobox-ul Wikipedia și țara de producție). Q199 („1”, fără unitate) și
+# elementele neclare lipsesc intenționat: valoarea lor rămâne doar în *_other_currency.
+CURRENCY_CODES = {
+    "Q4917": "USD", "Q4916": "EUR", "Q25224": "GBP", "Q41044": "RUB", "Q1104069": "CAD",
+    "Q259502": "AUD", "Q8146": "JPY", "Q80524": "INR", "Q39099": "CNY", "Q202040": "KRW",
+    "Q25344": "CHF", "Q31015": "HKD", "Q122922": "SEK", "Q132643": "NOK", "Q25417": "DKK",
+    "Q173117": "BRL", "Q4730": "MXN", "Q203567": "NGN", "Q189097": "ESP", "Q204992": "ITL",
+    "Q203354": "FIM", "Q199462": "EGP", "Q16068": "DEM", "Q184172": "FRF", "Q131645": "RON",
+    "Q131016": "CZK", "Q47190": "HUF", "Q208526": "TWD", "Q172872": "TRY", "Q123213": "PLN",
+    "Q163712": "MYR", "Q1472704": "NZD", "Q177882": "THB", "Q17193": "PHP", "Q200192": "MAD",
+    "Q1546443": "GRD", "Q209792": "JMD", "Q200050": "CLP", "Q133011": "LVL", "Q131473": "BEF",
+    "Q190951": "SGD", "Q131309": "ILS", "Q181907": "ZAR", "Q192090": "VND", "Q81893": "UAH",
+    "Q615640": "SUR", "Q622599": "CSK",
+}
+
+
 def _money(details: pd.DataFrame, kind: str, name: str, worldwide_only: bool = False) -> pd.DataFrame:
     d = details[details["kind"] == kind]
     if worldwide_only:
         d = d[d["place"].isna() | (d["place"] == WORLDWIDE)]
     usd = d[(d["unit"] == USD) & (d["amount"] > 0)]
     out = usd.groupby("wikidata_id")["amount"].agg(**{name: "max", f"{name}_n_values": "nunique"})
-    # Films that have the amount only in another currency (reported, not converted)
-    other = d[~d["wikidata_id"].isin(usd["wikidata_id"]) & (d["unit"] != USD)]
+    # Films that have the amount only in another currency
+    other = d[~d["wikidata_id"].isin(usd["wikidata_id"]) & (d["unit"] != USD) & (d["amount"] > 0)]
     other_unit = other.groupby("wikidata_id")["unit"].first().rename(f"{name}_other_currency")
-    return out.join(other_unit, how="outer")
+    # Suma în moneda ei: USD dacă există, altfel prima monedă cunoscută (maximul în acea monedă)
+    known = pd.concat([usd, other[other["unit"].isin(CURRENCY_CODES)]])
+    known = known.assign(_usd=known["unit"] != USD).sort_values(["wikidata_id", "_usd", "unit"])
+    first_unit = known.groupby("wikidata_id")["unit"].first()
+    known = known[known["unit"] == known["wikidata_id"].map(first_unit)]
+    native = known.groupby("wikidata_id").agg(**{f"{name}_amount": ("amount", "max"),
+                                                 f"{name}_currency": ("unit", "first")})
+    native[f"{name}_currency"] = native[f"{name}_currency"].map(CURRENCY_CODES)
+    return out.join(other_unit, how="outer").join(native, how="outer")
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +304,8 @@ def build(only: list[str] | None = None) -> pd.DataFrame:
 
     return df[[
         "imdb_id", "wikidata_id", "tmdb_id", "enwiki_title", "year", "release_date_wd",
-        "budget_wd", "gross_wd", "is_adaptation", "adaptation_type", "adaptation_source_types",
+        "budget_wd", "gross_wd", "budget_wd_amount", "budget_wd_currency", "gross_wd_amount", "gross_wd_currency",
+        "is_adaptation", "adaptation_type", "adaptation_source_types",
         "budget_wd_n_values", "gross_wd_n_values", "budget_wd_other_currency", "gross_wd_other_currency",
         "budget_wd_implausible", "gross_wd_implausible", "imdb_n_ids",
     ]]
@@ -291,12 +319,11 @@ def finalize(df: pd.DataFrame, year_min: int, year_max: int) -> pd.DataFrame:
     return df.drop_duplicates("imdb_id").drop(columns="_filled").reset_index(drop=True)
 
 
-CURRENCY_CODES = {"Q4916": "EUR", "Q25224": "GBP", "Q41044": "RUB", "Q1104069": "CAD", "Q259502": "AUD",
-                  "Q8146": "JPY", "Q80524": "INR", "Q39099": "CNY", "Q202040": "KRW", "Q25344": "CHF"}
-
 
 def report(df: pd.DataFrame) -> str:
     top_other = df["budget_wd_other_currency"].map(lambda q: CURRENCY_CODES.get(q, q)).value_counts().head(5)
+    unknown = pd.concat([df.loc[df["budget_wd_amount"].isna(), "budget_wd_other_currency"],
+                         df.loc[df["gross_wd_amount"].isna(), "gross_wd_other_currency"]]).dropna()
     return "\n".join([
         f"Filme cu imdb_id în Wikidata ({YEAR_MIN}–{YEAR_MAX}, unic pe imdb_id): {len(df)}",
         f"Cu articol en.wikipedia: {df['enwiki_title'].notna().sum()}",
@@ -305,6 +332,8 @@ def report(df: pd.DataFrame) -> str:
         f"(top: {', '.join(f'{k}={v}' for k, v in top_other.items())})",
         f"Încasări mondiale în USD (gross_wd): {df['gross_wd'].notna().sum()}",
         f"Încasări doar în altă monedă: {df['gross_wd_other_currency'].notna().sum()}",
+        f"Sume păstrate în moneda lor (budget_wd_amount / gross_wd_amount): {df['budget_wd_amount'].notna().sum()} / "
+        f"{df['gross_wd_amount'].notna().sum()}; monedă necunoscută (ignorate): {len(unknown)}",
         f"Cu buget și încasări în USD: {(df['budget_wd'].notna() & df['gross_wd'].notna()).sum()}",
         f"Ecranizări (P144): {df['is_adaptation'].sum()} "
         f"({', '.join(f'{k}={v}' for k, v in df['adaptation_type'].value_counts().items())})",

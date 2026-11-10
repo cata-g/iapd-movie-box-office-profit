@@ -11,41 +11,82 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from extraction.wikipedia import infobox_field, parse_money, parse_names
 
-# raw infobox value -> (value, is_range, has_other_currency)
+# raw infobox value -> (amount, currency, is_range, usd)   (usd = suma în USD scrisă în infobox)
 CASES = {
-    "$15 million": (15e6, False, False),
-    "$10–15 million": (12.5e6, True, False),
-    "US$2.5 million": (2.5e6, False, False),
-    "$1,200,000": (1.2e6, False, False),
-    "$200,000–$750,000<ref name=\"THR\">{{cite web |url=x}}</ref>": (475_000, True, False),
-    "$15,000-$450,000": (232_500, True, False),
-    "$3.5&nbsp;million<ref name=\"Mojo\" />": (3.5e6, False, False),
-    "$356–400{{nbsp}}million": (378e6, True, False),
-    "$2.94{{nbsp}}billion": (2.94e9, False, False),
-    "{{US$|160 million}}": (160e6, False, False),
-    "Production: $7,225<br />Post-production: $200,000": (7_225, False, False),
-    "£3 million": (None, False, True),
-    "€10 million": (None, False, True),
-    "{{INR|55 crore}}": (None, False, True),
-    "₹40 crore": (None, False, True),
-    "A$8 million": (None, False, True),
-    "£3 million (US$4.5 million)": (None, False, True),
-    "MYR 2.80 million": (None, False, True),
-    "CAD 10.5 million": (None, False, True),
-    "{{INR}}30 million": (None, False, True),
-    "USD 4 million": (4e6, False, False),
-    "{{USD}}5 million": (5e6, False, False),
-    "{{usd|65,000}}": (65_000, False, False),
-    "{{JPY|289 million}}<br>({{USD|800,000|long=no}})": (None, False, True),
-    "": (None, False, False),
+    "$15 million": (15e6, "USD", False, 15e6),
+    "$10–15 million": (12.5e6, "USD", True, 12.5e6),
+    "US$2.5 million": (2.5e6, "USD", False, 2.5e6),
+    "$1,200,000": (1.2e6, "USD", False, 1.2e6),
+    "$200,000–$750,000<ref name=\"THR\">{{cite web |url=x}}</ref>": (475_000, "USD", True, 475_000),
+    "$15,000-$450,000": (232_500, "USD", True, 232_500),
+    "$3.5&nbsp;million<ref name=\"Mojo\" />": (3.5e6, "USD", False, 3.5e6),
+    "$356–400{{nbsp}}million": (378e6, "USD", True, 378e6),
+    "$2.94{{nbsp}}billion": (2.94e9, "USD", False, 2.94e9),
+    "{{US$|160 million}}": (160e6, "USD", False, 160e6),
+    "$35.0 Million": (35e6, "USD", False, 35e6),
+    "Production: $7,225<br />Post-production: $200,000": (7_225, "USD", False, 7_225),
+    "USD 4 million": (4e6, "USD", False, 4e6),
+    "{{USD}}5 million": (5e6, "USD", False, 5e6),
+    "{{usd|65,000}}": (65_000, "USD", False, 65_000),
+    # alte monede: suma și codul ISO
+    "A$2,417,000": (2_417_000, "AUD", False, None),
+    "MXN$142.3 million": (142.3e6, "MXN", False, None),
+    "{{INR|55 crore}}": (5.5e8, "INR", False, None),
+    "₹40 crore": (4e8, "INR", False, None),
+    "₹35 lakhs": (3.5e6, "INR", False, None),
+    "{{INR}}30 million": (30e6, "INR", False, None),
+    "{{INRConvert|3.6|c|year=1978}}": (3.6e7, "INR", False, None),
+    "{{Currency|1.2 million|CAD}}": (1.2e6, "CAD", False, None),
+    "CAD $1.5 million": (1.5e6, "CAD", False, None),
+    "£3 million": (3e6, "GBP", False, None),
+    "€10 million": (10e6, "EUR", False, None),
+    "MYR 2.80 million": (2.8e6, "MYR", False, None),
+    "8 169 771 ESP": (8_169_771, "ESP", False, None),
+    "{{Philippine peso|5 million}}": (5e6, "PHP", False, None),
+    # suma în USD scrisă explicit în paranteză are prioritate la conversie
+    "£800,000 ($1.4 million)": (800_000, "GBP", False, 1.4e6),
+    "MYR 35.88 million (USD 7.68 million)": (35.88e6, "MYR", False, 7.68e6),
+    "£3 million (US$4.5 million)": (3e6, "GBP", False, 4.5e6),
+    "415,000,000 ITL ($665,000)": (415e6, "ITL", False, 665_000),
+    "{{JPY|200 million|link=yes}} ({{US$|{{To USD|200000|JPN|year=1977|round=yes}},000|long=no}})":
+        (200e6, "JPY", False, None),     # USD calculat de un șablon, nu scris: se ignoră
+    # într-o listă, elementul „worldwide” e cel bun
+    "{{Plainlist| * {{JPY|1.5 billion}} (Japan) * {{US$|14.7 million|long=no}} (worldwide)}}":
+        (14.7e6, "USD", False, 14.7e6),
+    "": (None, None, False, None),
 }
+
+# simboluri ambigue: (raw, țări de producție TMDB) -> (amount, currency, note)
+AMBIGUOUS_CASES = [
+    ("¥1 billion", ["JP"], (1e9, "JPY", "")),
+    ("¥1 billion", ["CN"], (1e9, "CNY", "")),
+    ("¥1 billion", [], (1e9, None, "ambiguous")),          # fără țară clară: ignorat și numărat
+    ("¥1 billion", ["JP", "CN"], (1e9, None, "ambiguous")),
+    ("4 million [[Swedish krona|kr]]", ["SE"], (4e6, "SEK", "")),
+    ("kr 4 million", ["DK", "SE"], (4e6, None, "ambiguous")),
+    ("Rs 12 [[lakh]]", ["IN"], (1.2e6, "INR", "")),
+    ("$5 million", ["AU"], (5e6, "AUD", "")),
+    ("$5 million", ["AU", "US"], (5e6, "USD", "")),
+    ("$5 million", ["GB"], (5e6, "USD", "")),
+    ("$5 million", ["AU", "CA"], (5e6, None, "ambiguous")),
+    ("ZW$5 million", [], (None, None, "unknown")),
+]
 
 
 def test_parse_money():
     for raw, expected in CASES.items():
-        got = parse_money(raw)
+        m = parse_money(raw)
+        got = (m.amount, m.currency, m.is_range, m.usd)
         assert got == expected, f"{raw!r}: expected {expected}, got {got}"
     print(f"Test 1 passed: {len(CASES)} formate de sume parsate corect.")
+
+
+def test_ambiguous():
+    for raw, countries, expected in AMBIGUOUS_CASES:
+        m = parse_money(raw, countries)
+        got = (m.amount, m.currency, m.note)
+        assert got == expected, f"{raw!r} {countries}: expected {expected}, got {got}"
+    print(f"Test 2 passed: {len(AMBIGUOUS_CASES)} simboluri ambigue rezolvate după țară (sau ignorate).")
 
 
 def test_infobox_field():
@@ -53,7 +94,7 @@ def test_infobox_field():
     assert infobox_field(text, "budget") == "$5 million<br />  (est.)"
     assert infobox_field(text, "gross") == "$9 million"
     assert infobox_field(text, "runtime") is None
-    print("Test 2 passed: câmpurile din infobox sunt extrase corect.")
+    print("Test 3 passed: câmpurile din infobox sunt extrase corect.")
 
 
 def test_parse_names():
@@ -69,11 +110,12 @@ def test_parse_names():
     for raw, expected in cases.items():
         got = parse_names(raw)
         assert got == expected, f"{raw!r}: expected {expected}, got {got}"
-    print(f"Test 3 passed: {len(cases)} formate de distribuitori parsate corect.")
+    print(f"Test 4 passed: {len(cases)} formate de distribuitori parsate corect.")
 
 
 if __name__ == "__main__":
     test_parse_money()
+    test_ambiguous()
     test_infobox_field()
     test_parse_names()
     print("\nToate testele au trecut.")
