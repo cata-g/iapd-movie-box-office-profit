@@ -1,21 +1,67 @@
 # Raport de integrare (#27)
 
-Generat cu `python extraction/integrate.py --threshold 2.5`.
+Generat cu `python extraction/integrate.py --threshold 2.5 --roi-rule roi-recalculat --budget-choice majoritate`.
 
-**Rezultat:** 15.972 filme în `data/processed/movies_dataset.csv`.
+**Rezultat:** 17.911 filme în `data/processed/movies_dataset.csv`.
 
 ## Ce filme am scos
 
 | Pas | Ce s-a scos | Scoase | Rămân |
 |---|---|---|---|
-| start | toate filmele din manifest | 0 | 27.657 |
-| buget | niciun buget între 10.000 $ și 500 mil. $ (bugete prea mici ignorate: tmdb 1.056) | 972 | 26.685 |
-| încasări | nicio sursă nu are încasări mondiale | 10.378 | 16.307 |
-| dată lansare | fără dată de lansare în TMDB | 156 | 16.151 |
-| interval ani | lansate înainte de 1950 sau după 2024 | 63 | 16.088 |
-| film TV | filme TV (n-au rulat în cinema) | 24 | 16.064 |
-| scurtmetraj | scurtmetraje (sub 40 min) | 22 | 16.042 |
-| ROI extrem | ROI sub 0,001 sau peste 100 pe care nu-l confirmă 2 surse (probabil o greșeală) | 70 | 15.972 |
+| start | filme 1950–2024 cu buget sau încasări în cel puțin o sursă | 0 | 47.565 |
+| fără buget | au încasări, dar nicio sursă nu are buget (nu intră în manifest; fără buget nu există ROI) | 14.420 | 33.145 |
+| buget | niciun buget între 10.000 $ și 500 mil. $ după conversia în USD (bugete în afara intervalului, ignorate: tmdb 1.056, dbp 26, wd 426, wp 418; fără curs: 334) | 1.961 | 31.184 |
+| încasări | nicio sursă nu are încasări mondiale (după conversia în USD; fără curs: 95) | 12.199 | 18.985 |
+| dată lansare | fără dată de lansare în TMDB | 684 | 18.301 |
+| interval ani | lansate înainte de 1950 sau după 2024 | 61 | 18.240 |
+| film TV | filme TV (n-au rulat în cinema) | 25 | 18.215 |
+| streaming | lansare de streaming (distribuitor Netflix, Amazon, Apple TV+, Disney+ ... sau lansare digitală la cel mult 30 de zile după cinema) cu încasări sub 5% din buget: lansarea în cinema a fost doar simbolică | 199 | 18.016 |
+| scurtmetraj | scurtmetraje (sub 40 min) | 24 | 17.992 |
+| ROI extrem | ROI sub 0,001 sau peste 100 care nu rămâne extrem când bugetul, apoi încasările sunt înlocuite cu valoarea unei surse independente (probabil o greșeală) | 81 | 17.911 |
+
+## Filme de streaming
+
+Populația proiectului sunt filmele lansate în cinema. Unele filme de streaming au avut doar o lansare simbolică în câteva săli (Hillbilly Elegy: buget 45 mil. $, încasări 38.852 $) și ar apărea ca „neprofitabile” fără să fi încercat să recupereze bugetul din bilete. Pasul „streaming” scoate un film doar dacă **ambele** condiții sunt adevărate:
+
+1. distribuitorul principal din infobox e un serviciu de streaming (Netflix, Amazon Studios / Prime Video, Apple TV+, Disney+, Hulu, HBO Max, Max, Paramount+, Peacock) **sau** TMDB are o lansare digitală (tipul 4) la cel mult 30 de zile după prima lansare în cinema (tipurile 2 și 3);
+2. încasările sunt sub 5% din buget (ROI < 0,05).
+
+Criteriul digital se aplică doar filmelor lansate din 2005: înainte nu exista distribuție digitală, iar TMDB are uneori casete sau DVD-uri marcate ca „digital” chiar la data premierei (Eureka, 1983). O lansare digitală *înainte* de cinema (VOD mai întâi, apoi câteva săli) contează și ea.
+
+A doua condiție păstrează filmele de streaming care au rulat cu adevărat în cinema (Manchester by the Sea, distribuit de Amazon Studios).
+
+| Criteriul îndeplinit | Filme scoase |
+|---|---|
+| doar distribuitorul | 4 |
+| doar lansarea digitală | 162 |
+| amândouă | 33 |
+| **total** | **199** |
+
+Primele 20 (după data lansării): D.E.B.S., Edmond, Pistol Whipped, Sleep Dealer, I Come with the Rain, The Yellow Handkerchief, Girl Clock!, The Chaperone, The Magic of Belle Isle, Spiders, Blinder, Struck by Lightning, The Congress, The Last Days on Mars, A Thousand Times Good Night, Lost Place, A Touch of Sin, Jealousy, The Decent One, Better Living Through Chemistry.
+
+Datele de lansare pe tipuri vin din răspunsurile TMDB deja descărcate (`python extraction/tmdb.py --release-dates`). Lipsesc pentru 242 filme (detaliile TMDB adăugate la manifest nu sunt în arhiva din Releases); la ele contează doar distribuitorul.
+
+## Cine lipsește: filmele fără încasări
+
+Cea mai mare pierdere din pâlnie e pasul „încasări”: filme cu buget, dar fără încasări mondiale în nicio sursă. Nu sunt o mostră la întâmplare:
+
+| | Scoase la „încasări” | Dataset final |
+|---|---|---|
+| Filme | 12.199 | 17.911 |
+| Voturi TMDB (mediană) | 18 | 189 |
+| Buget (mediană) | 0,8 mil. $ | 6,0 mil. $ |
+| Producții SUA | 40,8% | 56,6% |
+| În limba engleză | 60,6% | 64,8% |
+| 1950–1959 | 2,6% | 4,3% |
+| 1960–1969 | 5,1% | 3,3% |
+| 1970–1979 | 7,9% | 4,8% |
+| 1980–1989 | 7,7% | 9,9% |
+| 1990–1999 | 8,0% | 13,6% |
+| 2000–2009 | 22,8% | 24,3% |
+| 2010–2019 | 37,2% | 31,0% |
+| 2020–2024 | 8,5% | 8,7% |
+
+Filmele scoase sunt mult mai mici și mai puțin cunoscute (mai puține voturi, buget mai mic, mai puține producții americane). Încasările lor nu apar nicăieri tocmai pentru că au fost mici, deci ele sunt, foarte probabil, mai des neprofitabile. Rata de 32,2% filme profitabile e deci **supraestimată** față de toate filmele lansate în cinema: descrie filmele destul de cunoscute ca să le găsim încasările, iar modelul va învăța pe această populație.
 
 ## Ținta
 
@@ -23,23 +69,23 @@ Un film e **profitabil** dacă încasările sunt de cel puțin 2,5 ori bugetul (
 
 | | Filme | % |
 |---|---|---|
-| profitabile | 5.140 | 32,2% |
-| neprofitabile | 10.832 | 67,8% |
+| profitabile | 5.764 | 32,2% |
+| neprofitabile | 12.147 | 67,8% |
 
 Clasele sunt dezechilibrate: un model care spune mereu „neprofitabil” are dreptate în 67,8% din cazuri.
 
 ## De unde vin bugetul și încasările
 
 Când mai multe surse au o valoare, o luăm pe cea din sursa mai sigură:
-- buget: tmdb → dbpedia → wikidata → wikipedia
-- încasări: wikipedia → dbpedia → wikidata → tmdb
+- buget: tmdb → dbpedia → wikidata → wikipedia, dar prin **majoritate**: din fiecare grup independent (tmdb, wikidata, wiki = dbpedia/wikipedia) intră o singură valoare, a sursei celei mai prioritare din grup. Câștigă valoarea cu care sunt de acord (la ±25%) cele mai multe grupuri; la egalitate rămâne ordinea de mai sus. Așa, o greșeală izolată a TMDB nu mai câștigă doar pentru că TMDB e primul (Dragon Ball Super: Broly: TMDB 1 mil. $, Wikidata și Wikipedia 8,5 mil. $). Limită: Wikidata are exact aceeași valoare ca Wikipedia la 70,5% din bugete, deci și „majoritatea” poate fi uneori aceeași informație copiată.
+- încasări: wikipedia → dbpedia → wikidata → tmdb (doar ordinea; TMDB raportează sistematic încasări mai mici, de aceea e ultima)
 
 | Sursă | Buget | Încasări |
 |---|---|---|
-| tmdb | 12.283 | 2.085 |
-| dbpedia | 3.252 | 472 |
-| wikidata | 138 | 189 |
-| wikipedia | 299 | 13.226 |
+| tmdb | 12.039 | 1.449 |
+| dbpedia | 3.373 | 54 |
+| wikidata | 482 | 249 |
+| wikipedia | 2.017 | 16.159 |
 
 Box Office Mojo și The Numbers nu sunt folosite: interzic colectarea automată (vezi README).
 
@@ -51,51 +97,165 @@ Câte surse au o valoare pentru fiecare film:
 
 | Surse | Filme | % |
 |---|---|---|
-| 1 | 3.934 | 24,6% |
-| 2 | 3.516 | 22,0% |
-| 3 | 5.641 | 35,3% |
-| 4 | 2.881 | 18,0% |
+| 1 | 4.351 | 24,3% |
+| 2 | 4.580 | 25,6% |
+| 3 | 5.943 | 33,2% |
+| 4 | 3.037 | 17,0% |
 
 **Încasări**
 
 | Surse | Filme | % |
 |---|---|---|
-| 1 | 2.698 | 16,9% |
-| 2 | 3.480 | 21,8% |
-| 3 | 7.106 | 44,5% |
-| 4 | 2.688 | 16,8% |
+| 1 | 3.287 | 18,4% |
+| 2 | 4.565 | 25,5% |
+| 3 | 7.283 | 40,7% |
+| 4 | 2.776 | 15,5% |
 
-Sursele nu se pun mereu de acord: la 1.175 filme (7,4%) bugetele diferă cu peste 25%, iar la 1.738 (10,9%) încasările.
+Sursele nu se pun mereu de acord: la 1.842 filme (10,3%) bugetele diferă cu peste 25%, iar la 2.322 (13,0%) încasările.
 
-Atenție: DBpedia copiază datele din Wikipedia, deci „2 surse” poate fi de fapt una singură.
+DBpedia copiază infobox-ul Wikipedia (valori identice la 96,5% din bugete și 91,4% din încasări), deci nu e o sursă independentă. De aceea `budget_n_agree` și `gross_n_agree` (câte surse confirmă valoarea aleasă, la ±25%) le numără ca **o singură sursă**: tmdb, wikidata și wiki (dbpedia sau wikipedia) — maximum 3.
+
+## Monede
+
+Bugetul și încasările se iau în moneda în care sunt scrise (`budget_<sursă>_amount`, `budget_<sursă>_currency`, la fel pentru încasări) și se convertesc în USD cu cursul mediu al anului lansării (World Bank, indicatorul `PA.NUS.FCRF`, licență CC BY 4.0; `fx_year`, `budget_fx_rate`, `gross_fx_rate`). Abia apoi se aplică regulile de mai sus: intervalele plauzibile, alegerea prin majoritate, toleranța de ±25% și regula pentru ROI extrem.
+
+- 3.797 filme (21,2%) au bugetul sau încasările dintr-o sumă în altă monedă; doar 2,4% dintre ele sunt (co)producții americane. La 142 dintre ele, suma în USD vine chiar din infobox („£800,000 ($1.4 million)”) și are prioritate față de conversia noastră.
+- Când bugetul și încasările alese sunt în aceeași monedă, ROI-ul se calculează direct din sumele native (un raport nu are nevoie de curs): 1.827 filme. `roi_currency` arată moneda.
+
+**Moneda în care s-a calculat ROI-ul**
+
+| Monedă | Filme | % |
+|---|---|---|
+| USD | 16.084 | 89,8% |
+| INR | 1.029 | 5,7% |
+| AUD | 182 | 1,0% |
+| GBP | 95 | 0,5% |
+| CAD | 93 | 0,5% |
+| EUR | 70 | 0,4% |
+| BRL | 55 | 0,3% |
+| HKD | 40 | 0,2% |
+| RUB | 40 | 0,2% |
+| JPY | 32 | 0,2% |
+| altele | 191 | 1,1% |
+
+**Sume care nu s-au putut converti** (filme scoase la pașii „buget” / „încasări” doar din acest motiv)
+
+| Motiv | Buget | Încasări |
+|---|---|---|
+| fără curs înainte de 1960 | 204 | 51 |
+| hiperinflație (curs schimbat cu peste 50% față de anul anterior) | 15 | 5 |
+| monedă sau an fără curs World Bank | 115 | 39 |
+
+Seria World Bank începe în 1960: pentru filmele din 1950–1959 nu folosim alt curs (nu inventăm valori), deci filmele din anii '50 cu sume doar în altă monedă se pierd. Monedele redenominate (Brazilia înainte de 1994, Turcia înainte de 2005) apar în serie în unitatea de azi; anii lor au aproape toți hiperinflație, iar restul cad la verificarea intervalelor plauzibile.
+
+- DBpedia marchează orice sumă ca USD, deși uneori a citit „A$2,417,000” sau „MXN$142.3 million”. Când suma DBpedia e chiar prima sumă din infobox-ul Wikipedia, iar aceea e în altă monedă, DBpedia primește moneda din infobox: 1.456 bugete și 855 încasări.
+- Simboluri ambigue („¥” = JPY sau CNY, „kr” = SEK / NOK / DKK, „Rs”, „$”) se lămuresc după țara de producție din TMDB. Dacă tot rămân ambigue, suma e ignorată: 37 bugete și 17 încasări din Wikipedia.
+- Un „$” simplu înseamnă USD, cu o excepție: un film fără SUA printre țările de producție, dar dintr-o țară cu dolar propriu (Australia, Canada, Hong Kong, Noua Zeelandă, Mexic ...), primește moneda acelei țări. Limită: Wikidata are aceeași sumă marcată USD la multe dintre aceste filme, dar și acolo valorile sunt adesea importate automat din infobox, deci nu e o confirmare independentă.
+- Limită: cursul e media anului lansării; bugetul se cheltuie de obicei cu 1–2 ani înainte, iar încasările vin în anul lansării și după.
+
+## Mare studio: producție sau distribuție
+
+| Coloană | Ce înseamnă | Filme cu 1 | % profitabile (1) | % profitabile (0) |
+|---|---|---|---|---|
+| `major_studio` | producție: o companie TMDB e un mare studio | 4.352 | 41,5% | 29,2% |
+| `major_distributor` | distribuitorul principal din infobox e un mare studio | 6.482 | 39,3% | 28,1% |
+| `major_any` | oricare din cele două | 6.703 | 39,1% | 28,1% |
+
+Față de `major_studio`, 2.351 filme trec în clasa „mare studio” doar prin distribuitor (de exemplu filme independente cumpărate de Universal sau Sony Pictures Classics), iar 221 au un mare studio printre producători, dar alt distribuitor principal. `major_any` le cuprinde pe toate. Contează doar distribuitorul principal: lista completă din infobox poate avea distribuitori adăugați după lansare (reluări, alte piețe).
+
+`budget_is_range` = 1 la 888 filme (5,0%): bugetul final e mijlocul unui interval din infobox („$10–15 million”). E o coloană despre calitatea datelor, nu o caracteristică pentru model.
+
+## De ce excludem coloanele META
+
+`extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; în model intră doar cele 79 din FEATURES (`feature_columns(df)`), iar `extraction/test_columns.py` verifică asta pe CSV. META sunt cele 37 coloane despre **date**, nu despre film: sursa valorii, câte surse au o valoare și câte sunt de acord, sumele brute, monedele și cursurile. Ele prezic ținta, pentru că un film cu încasări raportate peste tot e de obicei un film cunoscut, care a mers bine:
+
+**% profitabile după numărul de surse cu încasări**
+
+| Surse cu încasări | Filme | % profitabile |
+|---|---|---|
+| 1 | 3.287 | 26,9% |
+| 2 | 4.565 | 23,8% |
+| 3 | 7.283 | 30,1% |
+| 4 | 2.776 | 57,6% |
+
+**% profitabile după sursa bugetului ales**
+
+| Sursa bugetului | Filme | % profitabile |
+|---|---|---|
+| dbpedia | 3.373 | 19,9% |
+| tmdb | 12.039 | 36,1% |
+| wikidata | 482 | 26,1% |
+| wikipedia | 2.017 | 31,1% |
+
+**% profitabile după sursa încasărilor alese**
+
+| Sursa încasărilor | Filme | % profitabile |
+|---|---|---|
+| dbpedia | 54 | 33,3% |
+| tmdb | 1.449 | 19,0% |
+| wikidata | 249 | 21,3% |
+| wikipedia | 16.159 | 33,5% |
+
+**Corelația coloanelor META numerice cu `profitable`**
+
+| Coloană | Corelație cu `profitable` |
+|---|---|
+| `gross_wd` | 0,370 |
+| `worldwide_gross_dbp` | 0,351 |
+| `gross_dbp_amount` | 0,350 |
+| `revenue_tmdb` | 0,327 |
+| `gross_tmdb_amount` | 0,326 |
+| `gross_wp` | 0,318 |
+| `gross_n_agree` | 0,223 |
+| `budget_n_agree` | 0,191 |
+| `gross_n_sources` | 0,179 |
+| `budget_n_sources` | 0,162 |
+| `gross_wd_amount` | 0,089 |
+| `budget_wd` | 0,083 |
+| `fx_year` | -0,071 |
+| `budget_wp` | 0,065 |
+| `budget_dbp` | 0,061 |
+| `budget_is_range` | 0,056 |
+| `budget_dbp_amount` | 0,056 |
+| `budget_tmdb_amount` | 0,047 |
+| `budget_tmdb` | 0,047 |
+| `budget_conflict` | 0,045 |
+| `gross_fx_rate` | 0,041 |
+| `gross_conflict` | 0,035 |
+| `gross_wp_amount` | 0,024 |
+| `budget_fx_rate` | 0,021 |
+| `budget_wp_amount` | 0,005 |
+| `budget_wd_amount` | -0,003 |
+
+La predicție, pentru un film care nu a fost încă lansat, nu știm câte surse îi vor raporta încasările. Un model care le folosește ar învăța „filmul e documentat bine”, nu „filmul va fi profitabil”.
 
 ## Date lipsă
 
 | Coloană | Lipsesc | % |
 |---|---|---|
-| `runtime_min` | 19 | 0,1% |
-| `certification` | 5.655 | 35,4% |
-| `sequel_number` | 12 | 0,1% |
-| `director_prev_mean_roi` | 6.693 | 41,9% |
-| `cast_prev_mean_roi` | 2.510 | 15,7% |
+| `runtime_min` | 34 | 0,2% |
+| `certification` | 7.487 | 41,8% |
+| `sequel_number` | 13 | 0,1% |
+| `director_prev_mean_roi` | 7.438 | 41,5% |
+| `cast_prev_mean_roi` | 2.787 | 15,6% |
 
 Istoricul regizorului și al actorilor lipsește când e primul lor film din dataset.
 
 ## Istoricul ROI: de ce nu ajunge media
 
-Câteva filme au un ROI uriaș (Paranormal Activity: 12.947), deși la jumătate dintre filme ROI-ul e sub 1,31. Un singur astfel de hit strică media pentru toată cariera unui regizor. De aceea, pe lângă media cerută în issue, am adăugat:
+Câteva filme au un ROI uriaș (Paranormal Activity: 12.947), deși la jumătate dintre filme ROI-ul e sub 1,35. Un singur astfel de hit strică media pentru toată cariera unui regizor. De aceea, pe lângă media cerută în issue, am adăugat:
 
 - `*_prev_profitable_rate`: ce parte din filmele anterioare au fost profitabile;
 - `*_prev_mean_log_roi`: media pe logaritm, unde un hit contează mult mai puțin.
 
 | Coloană | Corelație cu `profitable` |
 |---|---|
-| `director_prev_mean_roi` | 0,003 |
-| `director_prev_mean_log_roi` | 0,194 |
-| `director_prev_profitable_rate` | 0,187 |
-| `cast_prev_mean_roi` | 0,034 |
-| `cast_prev_mean_log_roi` | 0,173 |
-| `cast_prev_profitable_rate` | 0,164 |
+| `director_prev_mean_roi` | 0,028 |
+| `director_prev_mean_log_roi` | 0,202 |
+| `director_prev_profitable_rate` | 0,189 |
+| `cast_prev_mean_roi` | 0,033 |
+| `cast_prev_mean_log_roi` | 0,185 |
+| `cast_prev_profitable_rate` | 0,177 |
 
 Media simplă aproape nu are legătură cu ținta; variantele noi au.
 

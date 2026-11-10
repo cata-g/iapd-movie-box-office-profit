@@ -3,9 +3,11 @@ TMDB extraction — discovers cinema releases 1950-2024 and fetches details.
 
 Usage:
     python extraction/tmdb.py
+    python extraction/tmdb.py --release-dates   # doar din cache, fără cereri (#45)
 
 Output:
     data/interim/tmdb_movies.parquet
+    data/interim/tmdb_release_dates.parquet     # prima lansare în cinema / digitală per film
 """
 
 import asyncio
@@ -36,6 +38,7 @@ INTERIM_DIR.mkdir(parents=True, exist_ok=True)
 
 DISCOVERED_FILE = RAW_DIR / "tmdb" / "discovered_ids.json"
 OUTPUT_FILE = INTERIM_DIR / "tmdb_movies.parquet"
+RELEASE_DATES_FILE = INTERIM_DIR / "tmdb_release_dates.parquet"
 
 YEARS = range(1950, 2025)
 
@@ -280,6 +283,37 @@ def search_title_year(title, year):
 
 
 # ---------------------------------------------------------------------------
+# Datele de lansare pe tipuri, din cache (#45)
+# ---------------------------------------------------------------------------
+
+def release_dates_from_cache() -> pd.DataFrame:
+    """Citește răspunsurile /movie/{id}?append_to_response=...,release_dates,... deja descărcate
+    în data/raw/tmdb/ (fără cereri noi; numele fișierelor din cache depind de cheia API, deci
+    le parcurgem pe toate). Per film: prima lansare în cinema (tipurile 2 și 3, orice țară) și
+    prima lansare digitală (tipul 4)."""
+    rows = []
+    files = sorted((RAW_DIR / SOURCE).glob("*.json"))
+    for path in tqdm(files, desc="Cache TMDB"):
+        text = path.read_text(encoding="utf-8")
+        if '"release_dates":{"results"' not in text:
+            continue
+        data = json.loads(text)
+        dates = {2: [], 3: [], 4: []}
+        for country in data["release_dates"].get("results", []):
+            for rd in country.get("release_dates", []):
+                d = (rd.get("release_date") or "")[:10]
+                if rd.get("type") in dates and d:
+                    dates[rd["type"]].append(d)
+        rows.append({"tmdb_id": data["id"], "imdb_id": data.get("imdb_id"),
+                     "first_theatrical": min(dates[2] + dates[3], default=None),
+                     "first_digital": min(dates[4], default=None)})
+    df = pd.DataFrame(rows).drop_duplicates("tmdb_id")
+    for col in ("first_theatrical", "first_digital"):
+        df[col] = pd.to_datetime(df[col], errors="coerce")
+    return df.sort_values("tmdb_id").reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -318,4 +352,9 @@ def build_dataset():
 
 
 if __name__ == "__main__":
-    build_dataset()
+    if "--release-dates" in sys.argv:
+        rd = release_dates_from_cache()
+        rd.to_parquet(RELEASE_DATES_FILE, index=False)
+        print(f"Scris {RELEASE_DATES_FILE}: {len(rd)} filme, cu lansare digitală: {rd['first_digital'].notna().sum()}")
+    else:
+        build_dataset()
