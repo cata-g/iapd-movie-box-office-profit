@@ -8,6 +8,8 @@ schimbă câte o singură decizie față de varianta implicită:
   - alegerea încasărilor: prioritatea curentă (Wikipedia prima) / TMDB prima
   - --roi-rule: vechi / surse-independente / roi-recalculat (implicit)
   - pragul de profitabilitate: 2 / 2,5 (implicit) / 3
+  - calitatea încasărilor: toate filmele (implicit) / fără cele cu încasări doar SUA/Canada sau
+    „rentals” (#47)
 
 Pentru fiecare variantă: câte filme rămân, % profitabile și câte etichete `profitable` se
 schimbă față de varianta implicită (la filmele prezente în ambele), plus filmele intrate / ieșite.
@@ -29,7 +31,7 @@ from extraction.utils import PROJECT_ROOT
 
 REPORT = PROJECT_ROOT / "docs" / "sensitivity_report.md"
 DEFAULT = {"budget_choice": "majoritate", "budget_sources": BUDGET_SOURCES, "gross_sources": GROSS_SOURCES,
-           "roi_rule": "roi-recalculat", "threshold": 2.5}
+           "roi_rule": "roi-recalculat", "threshold": 2.5, "drop_partial_gross": False}
 
 
 def _order(sources: dict, first: str) -> dict:
@@ -50,6 +52,8 @@ VARIANTS = [
     ("Prag", "2", {"threshold": 2.0}),
     ("Prag", "2,5 (implicit)", {}),
     ("Prag", "3", {"threshold": 3.0}),
+    ("Calitatea încasărilor", "toate filmele (implicit)", {}),
+    ("Calitatea încasărilor", "fără încasări doar SUA/Canada sau rentals", {"drop_partial_gross": True}),
 ]
 
 
@@ -57,6 +61,8 @@ def run(base: pd.DataFrame, fx: dict, cfg: dict) -> pd.DataFrame:
     """`profitable` (și dacă sursele sunt în dezacord) pentru filmele care trec curățarea."""
     df = clean(base.copy(), [], roi_rule=cfg["roi_rule"], budget_choice=cfg["budget_choice"],
                budget_sources=cfg["budget_sources"], gross_sources=cfg["gross_sources"], fx=fx, stats={})
+    if cfg["drop_partial_gross"]:
+        df = df[~(df["gross_is_domestic"] | df["gross_is_rental"])]
     return pd.DataFrame({"profitable": (df["roi"] >= cfg["threshold"]).astype(int),
                          "conflict": df["budget_conflict"] | df["gross_conflict"]})
 
@@ -78,7 +84,8 @@ def write(results: list[dict]) -> None:
     default = next(r for r in results if r["_default"])
     others = [r for r in results if not r["_default"]]
     worst = max(others, key=lambda r: r["_changed"])
-    film_rules = [r for r in others if r["Grup"] != "Prag"]
+    film_rules = [r for r in others if r["Grup"] in ("Buget", "Încasări", "ROI extrem")]
+    partial = next(r for r in others if r["Grup"] == "Calitatea încasărilor")
     worst_rule = max(film_rules, key=lambda r: r["_changed"])
     pos = [r["_pos"] for r in film_rules] + [default["_pos"]]
     flips = pd.Index([]).append([r["_flips"] for r in film_rules]).unique()
@@ -102,6 +109,7 @@ Varianta implicită: **{_n(default["Filme"])} filme, {default["% profitabile"]} 
 ## Concluzie
 
 - Deciziile despre date (ce buget sau ce încasări alegem, ce ROI extrem păstrăm) mută rata de filme profitabile doar între {_pct(min(pos))} și {_pct(max(pos))} și schimbă cel mult {_pct(worst_rule["_changed"])} din etichete ({worst_rule["Grup"].lower()}: {worst_rule["Varianta"]}). Ținta e **robustă** la aceste alegeri: doar câteva sute de filme, cele cu surse în dezacord, își schimbă clasa.
+- Fără filmele cu încasări doar SUA/Canada sau „rentals” (#47) rămân {_n(partial["Filme"])} filme, cu {partial["% profitabile"]} profitabile, față de {default["% profitabile"]}. Etichetele celorlalte filme nu se schimbă; rata se mișcă doar pentru că se scot filme vechi, etichetate cel mai probabil greșit ca neprofitabile.
 - Pragul contează mult mai mult: varianta cu cel mai mare efect e {worst["Grup"].lower()} {worst["Varianta"]}, cu {_pct(worst["_changed"])} etichete schimbate. Pragul de 2,5 e o convenție (bugetul nu include marketingul, iar cinematografele păstrează aproximativ jumătate din bilete), deci rezultatele modelului trebuie raportate și pentru pragurile 2 și 3, nu doar pentru 2,5.
 - Dintre cele {_n(len(flips))} filme care își schimbă eticheta într-una din variantele despre date, {_pct(conflict_share)} au surse în dezacord la buget sau la încasări (`budget_conflict` / `gross_conflict`), față de {_pct(base_conflict)} în tot dataset-ul. Incertitudinea e concentrată în filmele cu surse care nu se pun de acord, nu în regula aleasă.
 """
