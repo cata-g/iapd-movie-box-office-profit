@@ -131,6 +131,18 @@ Seria World Bank începe în 1960: pentru filmele din 1950–1959 nu folosim alt
 - Un „$” simplu înseamnă USD, cu o excepție: un film fără SUA printre țările de producție, dar dintr-o țară cu dolar propriu (Australia, Canada, Hong Kong, Noua Zeelandă, Mexic ...), primește moneda acelei țări. Limită: Wikidata are aceeași sumă marcată USD la multe dintre aceste filme, dar și acolo valorile sunt adesea importate automat din infobox, deci nu e o confirmare independentă.
 - Limită: cursul e media anului lansării; bugetul se cheltuie de obicei cu 1–2 ani înainte, iar încasările vin în anul lansării și după.
 
+## Mare studio: producție sau distribuție
+
+| Coloană | Ce înseamnă | Filme cu 1 | % profitabile (1) | % profitabile (0) |
+|---|---|---|---|---|
+| `major_studio` | producție: o companie TMDB e un mare studio | 4.352 | 41,5% | 29,2% |
+| `major_distributor` | distribuitorul principal din infobox e un mare studio | 6.482 | 39,3% | 28,1% |
+| `major_any` | oricare din cele două | 6.703 | 39,1% | 28,1% |
+
+Față de `major_studio`, 2.351 filme trec în clasa „mare studio” doar prin distribuitor (de exemplu filme independente cumpărate de Universal sau Sony Pictures Classics), iar 221 au un mare studio printre producători, dar alt distribuitor principal. `major_any` le cuprinde pe toate. Contează doar distribuitorul principal: lista completă din infobox poate avea distribuitori adăugați după lansare (reluări, alte piețe).
+
+`budget_is_range` = 1 la 888 filme (5,0%): bugetul final e mijlocul unui interval din infobox („$10–15 million”). E o coloană despre calitatea datelor, nu o caracteristică pentru model.
+
 ## Date lipsă
 
 | Coloană | Lipsesc | % |
