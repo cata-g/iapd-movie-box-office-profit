@@ -122,7 +122,7 @@ def load_sources(manifest: dict) -> pd.DataFrame:
     tmdb = _dedupe(tmdb.drop(columns="_match"))
 
     dbp = _dedupe(pd.read_parquet(INTERIM / "dbpedia.parquet"))
-    wd = _dedupe(pd.read_parquet(INTERIM / "wikidata.parquet"))
+    wd = _dedupe(pd.read_parquet(INTERIM / "wikidata.parquet")).rename(columns={"year": "year_wd"})
     wp = _dedupe(pd.read_parquet(INTERIM / "wikipedia.parquet"))
     aw = _dedupe(pd.read_parquet(INTERIM / "awards.parquet"))
 
@@ -136,7 +136,7 @@ def load_sources(manifest: dict) -> pd.DataFrame:
                        "cast_top3_ids", "keywords", "vote_average", "vote_count",
                        "sequel_number"]])
     df = df.join(dbp[["budget_dbp", "worldwide_gross_dbp"]])
-    df = df.join(wd[["budget_wd", "gross_wd", "budget_wd_amount", "budget_wd_currency", "gross_wd_amount",
+    df = df.join(wd[["year_wd", "budget_wd", "gross_wd", "budget_wd_amount", "budget_wd_currency", "gross_wd_amount",
                      "gross_wd_currency", "is_adaptation", "adaptation_type"]])
     df = df.join(wp[["budget_wp", "gross_wp", "budget_wp_amount", "budget_wp_currency", "budget_wp_note",
                      "budget_wp_range", "gross_wp_amount", "gross_wp_currency", "gross_wp_note",
@@ -169,35 +169,50 @@ def native_amounts(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def usd_values(df: pd.DataFrame) -> pd.DataFrame:
-    """Valoarea în USD a fiecărei surse (coloanele din BUDGET_SOURCES / GROSS_SOURCES): suma
-    însăși dacă e în USD; pentru Wikipedia, și suma în USD scrisă în paranteză. Celelalte
-    monede rămân fără valoare în USD."""
+FX_PATH = INTERIM / "fx_rates.parquet"
+FX_NOTE = {"pre1960": "fără curs înainte de 1960", "hyper": "hiperinflație (curs schimbat cu peste 50% "
+           "față de anul anterior)", "norate": "monedă sau an fără curs World Bank"}
+
+
+def load_fx() -> dict:
+    """(monedă, an) -> (curs = unități pentru 1 USD, hiperinflație), din fx_rates.py."""
+    fx = pd.read_parquet(FX_PATH)
+    return {(c, int(y)): (r, bool(h)) for c, y, r, h in
+            zip(fx["currency"], fx["year"], fx["rate"], fx["hyperinflation"])}
+
+
+def usd_values(df: pd.DataFrame, fx: dict) -> pd.DataFrame:
+    """Valoarea în USD a fiecărei surse (coloanele din BUDGET_SOURCES / GROSS_SOURCES):
+      - suma însăși dacă e în USD;
+      - pentru Wikipedia, suma în USD scrisă în infobox („£800,000 ($1.4 million)”) are prioritate;
+      - altfel suma / cursul mediu World Bank din anul lansării (TMDB; altfel anul din Wikidata).
+    Fără curs (înainte de 1960, monedă fără serie) sau în an de hiperinflație, valoarea lipsește;
+    motivul rămâne în {kind}_{src}_fx_note. Cursul folosit: {kind}_{src}_fx_rate (1 = USD,
+    gol = suma în USD scrisă în infobox)."""
+    year = pd.to_datetime(df["release_date"], errors="coerce").dt.year.astype(float).fillna(
+        pd.to_numeric(df["year_wd"], errors="coerce").astype(float))
+    df["fx_year"] = year.astype("Int64")
     for kind, sources in (("budget", BUDGET_SOURCES), ("gross", GROSS_SOURCES)):
         for name, col in sources.items():
             p = SRC_SHORT[name]
             amount, cur = df[f"{kind}_{p}_amount"], df[f"{kind}_{p}_currency"]
-            usd = amount.where(cur == "USD")
+            looked = [fx.get((c, int(y))) if isinstance(c, str) and c != "USD" and pd.notna(y) else None
+                      for c, y in zip(cur, year)]
+            rate = pd.Series([r[0] if r and not r[1] else np.nan for r in looked], index=df.index)
+            rate = rate.where(cur != "USD", 1.0)
+            note = pd.Series([None if not isinstance(c, str) or c == "USD" or (r and not r[1]) else
+                              "hyper" if r else "pre1960" if pd.notna(y) and y < 1960 else "norate"
+                              for c, y, r in zip(cur, year, looked)], index=df.index, dtype=object)
+            usd = amount / rate
             if name == "wikipedia":
-                usd = usd.fillna(pd.to_numeric(df[col], errors="coerce"))
+                written = pd.to_numeric(df[col], errors="coerce")       # USD scris în infobox
+                rate = rate.where(written.isna())
+                note = note.where(written.isna())
+                usd = written.fillna(usd)
             df[col] = usd
+            df[f"{kind}_{p}_fx_rate"] = rate.where(usd.notna())
+            df[f"{kind}_{p}_fx_note"] = note.where(amount > 0)
     return df
-
-
-def native_pair(df: pd.DataFrame, budget_sources: dict, gross_sources: dict) -> pd.DataFrame:
-    """Pentru ROI fără curs de schimb: primul buget (în ordinea de prioritate) într-o monedă
-    pe care o are și o sursă de încasări, și primele încasări în aceeași monedă."""
-    rows = []
-    for i in df.index:
-        budgets = [(df.at[i, f"budget_{SRC_SHORT[n]}_amount"], df.at[i, f"budget_{SRC_SHORT[n]}_currency"])
-                   for n in budget_sources]
-        grosses = [(df.at[i, f"gross_{SRC_SHORT[n]}_amount"], df.at[i, f"gross_{SRC_SHORT[n]}_currency"])
-                   for n in gross_sources]
-        budgets = [(a, c) for a, c in budgets if isinstance(c, str) and a > 0]
-        grosses = [(a, c) for a, c in grosses if isinstance(c, str) and a > 0]
-        pair = next(((b, g, c) for b, c in budgets for g, gc in grosses if gc == c), (np.nan, np.nan, None))
-        rows.append(pair)
-    return pd.DataFrame(rows, index=df.index, columns=["budget_native", "gross_native", "roi_currency"])
 
 
 # ---------------------------------------------------------------------------
@@ -330,9 +345,11 @@ def count_gross_only(manifest) -> int:
 
 def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "roi-recalculat",
           budget_choice: str = "majoritate", budget_sources: dict = None,
-          gross_sources: dict = None) -> pd.DataFrame:
+          gross_sources: dict = None, fx: dict = None, stats: dict = None) -> pd.DataFrame:
     budget_sources = budget_sources or BUDGET_SOURCES
     gross_sources = gross_sources or GROSS_SOURCES
+    fx = load_fx() if fx is None else fx
+    stats = {} if stats is None else stats
 
     def step(name: str, mask: pd.Series, rule: str) -> pd.DataFrame:
         nonlocal df
@@ -349,11 +366,7 @@ def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "
                                   "fără buget nu există ROI)",
                    "Scoase": gross_only, "Rămân": len(df)})
 
-    df = usd_values(df)
-    def other_currency(kind: str) -> pd.Series:
-        return pd.concat([df[f"{kind}_{p}_currency"].notna() & (df[f"{kind}_{p}_currency"] != "USD")
-                          & (df[f"{kind}_{p}_amount"] > 0) for p in SRC_SHORT.values()], axis=1).any(axis=1)
-    budget_other, gross_other = other_currency("budget"), other_currency("gross")
+    df = usd_values(df, fx)
 
     # Valori absurde per sursă → lipsă (buget < 10.000 USD = eroare)
     n_budget_err = {}
@@ -369,19 +382,21 @@ def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "
     df = df.rename(columns={f"{p}worldwide_gross_{k}": f"{p}gross_{k}" for p in ("", "_")
                             for k in ("source", "n_sources", "conflict", "n_agree", "n_agree_raw")})
 
-    # Fără curs de schimb, un film cu bugetul și încasările doar în altă monedă are ROI doar
-    # dacă amândouă sunt în aceeași monedă
-    no_usd = df["budget"].isna() | df["worldwide_gross"].isna()
-    native = native_pair(df[no_usd], budget_sources, gross_sources).reindex(df.index)
-    df = df.join(native)
-    step("buget", df["budget"].notna() | budget_other,
-         "niciun buget în USD între 10.000 $ și 500 mil. $ și niciun buget în altă monedă (bugete în USD în afara intervalului, "
-         "ignorate: " + ", ".join(f"{k.split('_')[1]} {_n(v)}" for k, v in n_budget_err.items() if v) + ")")
-    step("încasări", df["worldwide_gross"].notna() | gross_other.reindex(df.index),
-         "nicio sursă nu are încasări mondiale (în nicio monedă)")
-    pair = (df["budget"].notna() & df["worldwide_gross"].notna()) | df["roi_currency"].notna()
-    step("monede diferite", pair,
-         "bugetul și încasările sunt în monede diferite (fără curs de schimb nu se pot compara)")
+    # Filmele pierdute doar pentru că suma lor nu s-a putut converti (pentru raport)
+    for kind, final in (("budget", "budget"), ("gross", "worldwide_gross")):
+        notes = df[[f"{kind}_{p}_fx_note" for p in SRC_SHORT.values()]]
+        lost = df[final].isna() & notes.notna().any(axis=1)
+        first = notes[lost].bfill(axis=1).iloc[:, 0]
+        stats[f"fx_lost_{kind}"] = {k: int((first == k).sum()) for k in FX_NOTE}
+
+    step("buget", df["budget"].notna(),
+         "niciun buget între 10.000 $ și 500 mil. $ după conversia în USD (bugete în afara intervalului, "
+         "ignorate: " + ", ".join(f"{k.split('_')[1]} {_n(v)}" for k, v in n_budget_err.items() if v)
+         + "; fără curs: " + _n(sum(stats["fx_lost_budget"].values())) + ")")
+    stats["lost_gross_ids"] = df.index[df["worldwide_gross"].isna()]
+    step("încasări", df["worldwide_gross"].notna(),
+         "nicio sursă nu are încasări mondiale (după conversia în USD; fără curs: "
+         + _n(sum(stats["fx_lost_gross"].values())) + ")")
 
     df["release_date"] = pd.to_datetime(df["release_date"], errors="coerce")
     step("dată lansare", df["release_date"].notna(),
@@ -394,9 +409,18 @@ def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "
     runtime = pd.to_numeric(df["runtime"], errors="coerce")
     step("scurtmetraj", ~runtime.between(1, MIN_RUNTIME - 1), f"scurtmetraje (sub {MIN_RUNTIME} min)")
 
-    usd_pair = df["budget"].notna() & df["worldwide_gross"].notna()
-    df["roi"] = np.where(usd_pair, df["worldwide_gross"] / df["budget"], df["gross_native"] / df["budget_native"])
-    df["roi_currency"] = df["roi_currency"].where(~usd_pair, "USD")
+    # ROI: în USD; când bugetul și încasările alese sunt în aceeași monedă, direct din sumele
+    # native (raportul nu are nevoie de curs)
+    def chosen(kind: str, field: str) -> pd.Series:
+        src = df["budget_source" if kind == "budget" else "gross_source"].map(SRC_SHORT)
+        return pd.Series([df.at[i, f"{kind}_{p}_{field}"] for i, p in zip(df.index, src)], index=df.index)
+
+    b_cur, g_cur = chosen("budget", "currency"), chosen("gross", "currency")
+    df["budget_fx_rate"], df["gross_fx_rate"] = chosen("budget", "fx_rate"), chosen("gross", "fx_rate")
+    same = (b_cur == g_cur) & (b_cur != "USD")
+    df["roi"] = (df["worldwide_gross"] / df["budget"]).where(
+        ~same, chosen("gross", "amount").astype(float) / chosen("budget", "amount").astype(float))
+    df["roi_currency"] = b_cur.where(same, "USD")
     extreme = ~df["roi"].between(*ROI_EXTREME)
     confirmed = roi_confirmed(df, roi_rule, budget_sources, gross_sources)
     step("ROI extrem", ~extreme | confirmed, ROI_RULE_TEXT[roi_rule])
@@ -550,6 +574,9 @@ def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
             out[f"{kind}_{p}_amount"] = df[f"{kind}_{p}_amount"].round(2)
             out[f"{kind}_{p}_currency"] = df[f"{kind}_{p}_currency"]
     out["roi_currency"] = df["roi_currency"]
+    out["fx_year"] = df["fx_year"]
+    out["budget_fx_rate"] = df["budget_fx_rate"].round(6)
+    out["gross_fx_rate"] = df["gross_fx_rate"].round(6)
 
     # Doar pentru experimentul leakage vs. no-leakage
     out["vote_average"] = df["vote_average"]
@@ -587,21 +614,42 @@ def _same_share(out: pd.DataFrame, a: str, b: str) -> str:
 
 def currency_section(out: pd.DataFrame, stats: dict) -> str:
     n = len(out)
+    native = out["roi_currency"] != "USD"
+    written = pd.concat([out[f"{k}_wp_amount"].notna() & (out[f"{k}_wp_currency"] != "USD")
+                         & (out[f"{k}_source"] == "wikipedia") & out[f"{k}_fx_rate"].isna()
+                         for k in ("budget", "gross")], axis=1).any(axis=1)
     roi_cur = out["roi_currency"].value_counts()
     top = _md_table([{"Monedă": k, "Filme": int(v), "%": _pct(v / n)} for k, v in roi_cur.head(10).items()]
                     + [{"Monedă": "altele", "Filme": int(roi_cur.iloc[10:].sum()),
                         "%": _pct(roi_cur.iloc[10:].sum() / n)}])
-    non_us = out.loc[out["roi_currency"] != "USD", ["country_us"]].mean().iloc[0]
+    lost = _md_table([{"Motiv": FX_NOTE[k], "Buget": stats.get("fx_lost_budget", {}).get(k, 0),
+                       "Încasări": stats.get("fx_lost_gross", {}).get(k, 0)} for k in FX_NOTE])
+    def chosen_currency(kind: str) -> pd.Series:
+        src = out[f"{kind}_source"].map(SRC_SHORT)
+        return pd.Series([out.at[i, f"{kind}_{p}_currency"] for i, p in src.items()], index=out.index)
+    non_usd = (chosen_currency("budget") != "USD") | (chosen_currency("gross") != "USD")
+    us_share = out.loc[non_usd, "country_us"].mean()
     return f"""## Monede
 
-Bugetul și încasările se iau în moneda în care sunt scrise (`budget_<sursă>_amount`, `budget_<sursă>_currency`, la fel pentru încasări). Când bugetul și încasările unui film sunt în aceeași monedă, ROI-ul (un raport) nu are nevoie de curs de schimb: `roi_currency` arată moneda în care s-a calculat.
+Bugetul și încasările se iau în moneda în care sunt scrise (`budget_<sursă>_amount`, `budget_<sursă>_currency`, la fel pentru încasări) și se convertesc în USD cu cursul mediu al anului lansării (World Bank, indicatorul `PA.NUS.FCRF`, licență CC BY 4.0; `fx_year`, `budget_fx_rate`, `gross_fx_rate`). Abia apoi se aplică regulile de mai sus: intervalele plauzibile, alegerea prin majoritate, toleranța de ±25% și regula pentru ROI extrem.
+
+- {_n(int(non_usd.sum()))} filme ({_pct(non_usd.mean())}) au bugetul sau încasările dintr-o sumă în altă monedă; doar {_pct(us_share)} dintre ele sunt (co)producții americane. La {_n(int(written.sum()))} dintre ele, suma în USD vine chiar din infobox („£800,000 ($1.4 million)”) și are prioritate față de conversia noastră.
+- Când bugetul și încasările alese sunt în aceeași monedă, ROI-ul se calculează direct din sumele native (un raport nu are nevoie de curs): {_n(int(native.sum()))} filme. `roi_currency` arată moneda.
+
+**Moneda în care s-a calculat ROI-ul**
 
 {top}
 
-- {_n(int((out["roi_currency"] != "USD").sum()))} filme au ROI-ul calculat în altă monedă decât USD; doar {_pct(non_us)} dintre ele sunt (co)producții americane.
-- DBpedia marchează orice sumă ca USD, deși uneori a citit „A$2,417,000” sau „MXN$142.3 million”. Când suma DBpedia e chiar prima sumă din infobox-ul Wikipedia, iar aceea e în altă monedă, DBpedia primește moneda din infobox: {_n(stats["dbp_budget_fixed"])} bugete și {_n(stats["dbp_gross_fixed"])} încasări (dintre ele, în dataset: {_n(int(out["budget_dbp_currency"].ne("USD").sum() - out["budget_dbp_currency"].isna().sum()))} bugete).
-- Simboluri ambigue („¥” = JPY sau CNY, „kr” = SEK / NOK / DKK, „Rs”, „$”) se lămuresc după țara de producție din TMDB. Dacă tot rămân ambigue, suma e ignorată: {_n(stats["wp_ambiguous_budget"])} bugete și {_n(stats["wp_ambiguous_gross"])} încasări din Wikipedia.
+**Sume care nu s-au putut converti** (filme scoase la pașii „buget” / „încasări” doar din acest motiv)
+
+{lost}
+
+Seria World Bank începe în 1960: pentru filmele din 1950–1959 nu folosim alt curs (nu inventăm valori), deci filmele din anii '50 cu sume doar în altă monedă se pierd. Monedele redenominate (Brazilia înainte de 1994, Turcia înainte de 2005) apar în serie în unitatea de azi; anii lor au aproape toți hiperinflație, iar restul cad la verificarea intervalelor plauzibile.
+
+- DBpedia marchează orice sumă ca USD, deși uneori a citit „A$2,417,000” sau „MXN$142.3 million”. Când suma DBpedia e chiar prima sumă din infobox-ul Wikipedia, iar aceea e în altă monedă, DBpedia primește moneda din infobox: {_n(stats.get("dbp_budget_fixed", 0))} bugete și {_n(stats.get("dbp_gross_fixed", 0))} încasări.
+- Simboluri ambigue („¥” = JPY sau CNY, „kr” = SEK / NOK / DKK, „Rs”, „$”) se lămuresc după țara de producție din TMDB. Dacă tot rămân ambigue, suma e ignorată: {_n(stats.get("wp_ambiguous_budget", 0))} bugete și {_n(stats.get("wp_ambiguous_gross", 0))} încasări din Wikipedia.
 - Un „$” simplu înseamnă USD, cu o excepție: un film fără SUA printre țările de producție, dar dintr-o țară cu dolar propriu (Australia, Canada, Hong Kong, Noua Zeelandă, Mexic ...), primește moneda acelei țări. Limită: Wikidata are aceeași sumă marcată USD la multe dintre aceste filme, dar și acolo valorile sunt adesea importate automat din infobox, deci nu e o confirmare independentă.
+- Limită: cursul e media anului lansării; bugetul se cheltuie de obicei cu 1–2 ani înainte, iar încasările vin în anul lansării și după.
 """
 
 
@@ -725,7 +773,7 @@ def main() -> None:
              "wp_ambiguous_budget": int((df["budget_wp_note"] == "ambiguous").sum()),
              "wp_ambiguous_gross": int((df["gross_wp_note"] == "ambiguous").sum())}
     df = clean(df, funnel, gross_only=count_gross_only(df.index), roi_rule=args.roi_rule,
-               budget_choice=args.budget_choice)
+               budget_choice=args.budget_choice, stats=stats)
     out = features(df, args.threshold)
 
     PROCESSED.mkdir(parents=True, exist_ok=True)

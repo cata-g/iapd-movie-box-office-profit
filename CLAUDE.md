@@ -49,7 +49,7 @@ logs/
   - Logging în `logs/<sursa>.log`
 - **Crawlerele pot fi oprite și repornite** fără să descarce din nou (cache + status manifest)
 - **`imdb_id`** e cheia de unire între toate sursele
-- Sumele se păstrează **doar în USD**; restul se numără, nu se convertesc
+- Sumele se citesc **în moneda în care sunt scrise** (suma + cod ISO per sursă: `budget_<src>_amount`, `budget_<src>_currency`) și se convertesc în USD cu cursul mediu World Bank (`PA.NUS.FCRF`, `data/interim/fx_rates.parquet`) din anul lansării; abia apoi se compară sursele. O sumă în USD scrisă explicit în infobox are prioritate față de conversie; dacă bugetul și încasările alese sunt în aceeași monedă, ROI-ul se calculează direct din sumele native. Fără curs (înainte de 1960, monedă fără serie) sau în ani de hiperinflație (> 50% față de anul anterior), valoarea lipsește și se numără în raport; simbolurile ambigue (`¥`, `kr`, `$` ...) se rezolvă după țara de producție TMDB sau se ignoră, nu se ghicesc
 - Valorile brute per sursă se păstrează (`budget_tmdb`, `budget_tn`, ...); valoarea finală și sursa ei sunt coloane separate (`budget`, `budget_source`)
 - Cheia TMDB în `.env` (`TMDB_API_KEY`), niciodată în git
 
