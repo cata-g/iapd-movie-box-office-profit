@@ -111,6 +111,10 @@ pessimistic playful powerful provocative reflective regretful relaxed respectful
 sarcastic satirical sentimental serious shocking sincere skeptical somber suspenseful
 sympathetic tense thoughtful tragic vibrant whimsical witty zealous
 """.split()) | {"mean spirited"}
+# Etichete care se află abia după lansare (#47): scenele de după generic se descoperă la
+# vizionare, iar „controversă” / „film interzis” descriu reacția de după lansare
+POST_RELEASE_KEYWORDS = {"duringcreditsstinger", "aftercreditsstinger", "post-credits scene",
+                         "mid-credits scene", "banned film", "controversy", "cult film", "box office flop"}
 TOP_LANGUAGES = 5
 
 
@@ -532,6 +536,19 @@ def franchise_features(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     return (prior >= 1).astype(int), prior.astype("Int64")
 
 
+def keyword_stats(df: pd.DataFrame, threshold: float) -> dict:
+    """Cât de mult țin keywords de popularitate (pentru raport)."""
+    kws = df["keywords"].apply(lambda k: [w.strip().lower() for w in _as_list(k)])
+    n_kw = kws.apply(len)
+    votes = np.log1p(pd.to_numeric(df["vote_count"], errors="coerce").fillna(0))
+    prof = df["roi"] >= threshold
+    stingers = kws.apply(lambda ws: any(w in ("duringcreditsstinger", "aftercreditsstinger") for w in ws))
+    return {"corr_votes": float(np.corrcoef(n_kw, votes)[0, 1]),
+            "corr_profitable": float(np.corrcoef(n_kw, prof)[0, 1]),
+            "none": (int((n_kw == 0).sum()), float(prof[n_kw == 0].mean())),
+            "stingers": (int(stingers.sum()), float(prof[stingers].mean()))}
+
+
 def franchise_stats(df: pd.DataFrame, threshold: float) -> dict:
     """% profitabile după vechea definiție (orice film dintr-o colecție), pentru raport."""
     coll = pd.to_numeric(df["collection_id"], errors="coerce").fillna(0) > 0
@@ -587,9 +604,11 @@ def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
     cert = df["certification_us"].astype("string").str.strip().str.upper()
     out["certification"] = cert.map(CERTIFICATION).astype("Int64")
 
-    # 10. Cele mai frecvente keywords (one-hot), fără etichetele de ton (reacția publicului)
+    # 10. Cele mai frecvente keywords (one-hot), fără etichetele de ton (reacția publicului) și
+    # fără cele care se află abia după lansare
     kws = df["keywords"].apply(lambda k: [w.strip().lower() for w in _as_list(k)])
-    top = pd.Series([w for ws in kws for w in set(ws) if w not in TONE_KEYWORDS]).value_counts()
+    skip = TONE_KEYWORDS | POST_RELEASE_KEYWORDS
+    top = pd.Series([w for ws in kws for w in set(ws) if w not in skip]).value_counts()
     top = sorted(top.head(TOP_KEYWORDS).items(), key=lambda kv: (-kv[1], kv[0]))
     for w, _ in top:
         out[f"kw_{_slug(w)}"] = kws.apply(lambda ws, w=w: int(w in ws))
@@ -860,6 +879,7 @@ def write_report(out: pd.DataFrame, funnel: list, args, stats: dict = None) -> N
                                 "director_prev_profitable_rate", "cast_prev_mean_roi",
                                 "cast_prev_mean_log_roi", "cast_prev_profitable_rate"]])
     budget_rule = "" if args.budget_choice == "prioritate" else f""", dar prin **majoritate**: din fiecare grup independent (tmdb, wikidata, wiki = dbpedia/wikipedia) intră o singură valoare, a sursei celei mai prioritare din grup. Câștigă valoarea cu care sunt de acord (la ±25%) cele mai multe grupuri; la egalitate rămâne ordinea de mai sus. Așa, o greșeală izolată a TMDB nu mai câștigă doar pentru că TMDB e primul (Dragon Ball Super: Broly: TMDB 1 mil. $, Wikidata și Wikipedia 8,5 mil. $). Limită: Wikidata are exact aceeași valoare ca Wikipedia la {_same_share(out, "budget_wd", "budget_wp")} din bugete, deci și „majoritatea” poate fi uneori aceeași informație copiată."""
+    kw = stats.get("keywords", {"corr_votes": 0, "corr_profitable": 0, "none": (0, 0), "stingers": (0, 0)})
     franchise_table = "\n".join(
         ["  | Vechea definiție | Filme | % profitabile |", "  |---|---|---|"]
         + [f"  | {k} | {_n(v[0])} | {_pct(v[1])} |" for k, v in stats.get("franchise", {}).items()])
@@ -944,6 +964,8 @@ Media simplă aproape nu are legătură cu ținta; variantele noi au.
 
   Acum `is_franchise` = 1 doar pentru continuări, iar `sequel_number` = câte filme din serie au apărut înainte (0 = primul film sau film independent).
 - Am scos keywords ca `amused` sau `suspenseful`: arată cum a reacționat publicul, deci nu se știu înainte de lansare.
+- **Keywords de după lansare** (#47): `duringcreditsstinger` / `aftercreditsstinger` (scenă după generic) se află abia la vizionare și anunțau succesul ({_n(kw["stingers"][0])} filme, {_pct(kw["stingers"][1])} profitabile). Le-am scos, împreună cu `controversy`, `banned film` și altele asemănătoare.
+- **Limită rămasă:** keywords sunt adăugate de utilizatorii TMDB, după lansare. Filmele populare primesc mai multe: numărul de keywords se corelează {f"{kw['corr_votes']:.2f}".replace(".", ",")} cu log(voturi) și {f"{kw['corr_profitable']:.2f}".replace(".", ",")} cu `profitable`, iar cele {_n(kw["none"][0])} filme fără niciun keyword au doar {_pct(kw["none"][1])} profitabile. Chiar dacă fiecare keyword descrie conținutul, un vector `kw_*` plin de zerouri spune „film puțin cunoscut”. În experimentul cu leakage, merită comparat modelul cu și fără `kw_*`.
 - `vote_average` și `vote_count` rămân în tabel doar pentru experimentul cu leakage.
 - La antrenare, e mai sigur să împărțim filmele după an (vechi = antrenare, noi = test). La o împărțire aleatoare, istoricul unui film vechi ar putea folosi ROI-ul unui film din test.
 """
@@ -973,6 +995,7 @@ def main() -> None:
     df = clean(df, funnel, gross_only=count_gross_only(df.index), roi_rule=args.roi_rule,
                budget_choice=args.budget_choice, stats=stats)
     stats["franchise"] = franchise_stats(df, args.threshold)
+    stats["keywords"] = keyword_stats(df, args.threshold)
     out = features(df, args.threshold)
 
     PROCESSED.mkdir(parents=True, exist_ok=True)
