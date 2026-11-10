@@ -60,15 +60,17 @@ ROI_RULE_TEXT = {
 }
 MIN_RUNTIME = 40               # sub 40 min = scurtmetraj (fără lansare în cinema)
 
-# Filme de streaming cu o lansare în cinema doar simbolică: în afara populației (filme lansate
-# în cinema). Se scot doar dacă AU încasări sub 5% din buget (Manchester by the Sea, distribuit
-# de Amazon, a rulat cu adevărat în cinema și rămâne).
+# Distribuitorul principal e un serviciu de streaming: caracteristica `streaming_distributor`
+# (se știe înainte de lansare). Din #52 nu mai filtrăm filmele de streaming (vezi raportul).
 STREAMING_DISTRIBUTORS = re.compile(
     r"^(?:Netflix|Amazon Studios|Amazon Prime Video|Amazon Prime|Prime Video|Apple TV\+|Disney\+"
     r"(?: Hotstar)?|Hulu|HBO Max|Max|Paramount\+|Peacock)$", re.I)
-STREAMING_DIGITAL_DAYS = 30    # lansare digitală (TMDB tip 4) la cel mult 30 de zile după cinema
-STREAMING_DIGITAL_FROM = 2005  # înainte nu exista distribuție digitală: tipul 4 e o casetă/DVD marcată greșit
-STREAMING_MAX_ROI = 0.05
+# Filtrul vechi „streaming” (#45), păstrat DOAR pentru raport și sensitivity.py: semnal de
+# streaming (distribuitor sau lansare digitală TMDB la cel mult 30 de zile după cinema, din 2005)
+# și ROI < 0,05. Nu mai scoate niciun film din dataset.
+LEGACY_DIGITAL_DAYS = 30
+LEGACY_DIGITAL_FROM = 2005
+LEGACY_MAX_ROI = 0.05
 
 # ID-uri TMDB ale marilor studiouri și ale diviziilor lor de film
 MAJOR_STUDIOS = {
@@ -149,7 +151,6 @@ def load_sources(manifest: dict) -> pd.DataFrame:
     wd = _dedupe(pd.read_parquet(INTERIM / "wikidata.parquet")).rename(columns={"year": "year_wd"})
     wp = _dedupe(pd.read_parquet(INTERIM / "wikipedia.parquet"))
     aw = _dedupe(pd.read_parquet(INTERIM / "awards.parquet"))
-    rd = pd.read_parquet(INTERIM / "tmdb_release_dates.parquet").drop_duplicates("tmdb_id")
 
     # Manifestul (#5) are doar filmele cu buget în USD; se adaugă cele cu buget doar în altă monedă
     ids = sorted({k for k in manifest if k} | _currency_ids(wd, wp, "budget"))
@@ -165,10 +166,10 @@ def load_sources(manifest: dict) -> pd.DataFrame:
                      "gross_wd_currency", "is_adaptation", "adaptation_type"]])
     df = df.join(wp[["budget_wp", "gross_wp", "budget_wp_amount", "budget_wp_currency", "budget_wp_note",
                      "budget_wp_range", "gross_wp_amount", "gross_wp_currency", "gross_wp_note",
+                     "budget_wp_misread", "gross_wp_misread",
                      "gross_wp_domestic", "gross_wp_rental", "gross_wp_single_market", "gross_wp_worldwide",
                      "based_on_wp", "distributor_wp"]])
     df = df.join(aw)
-    df = df.merge(rd[["tmdb_id", "first_theatrical", "first_digital"]], on="tmdb_id", how="left").set_index(df.index)
     return native_amounts(df)
 
 
@@ -177,7 +178,8 @@ def native_amounts(df: pd.DataFrame) -> pd.DataFrame:
     TMDB e mereu în USD. DBpedia e marcat USD, dar uneori a citit „A$2,417,000” sau
     „MXN$142.3 million” ca dolari americani: când suma DBpedia e chiar prima sumă din
     infobox-ul Wikipedia, iar aceea e în altă monedă (sau într-un simbol ambiguu), DBpedia
-    primește moneda din infobox."""
+    primește moneda din infobox. La fel pentru virgula zecimală (#52): când DBpedia are exact
+    suma citită greșit („13,7 million” ca 137 milioane), primește valoarea corectă din infobox."""
     df["dbp_currency_fixed"] = False
     for kind, dbp_col, tmdb_col in (("budget", "budget_dbp", "budget_tmdb"),
                                     ("gross", "worldwide_gross_dbp", "revenue_tmdb")):
@@ -193,6 +195,12 @@ def native_amounts(df: pd.DataFrame) -> pd.DataFrame:
         df[f"{kind}_dbp_currency"] = np.where(misread, wp_cur, np.where(dbp.notna(), "USD", None))
         df.loc[misread & wp_cur.isna(), f"{kind}_dbp_amount"] = np.nan     # simbol ambiguu: ignorat
         df[f"dbp_{kind}_currency_fixed"] = misread
+
+        wrong = df[f"{kind}_wp_misread"]
+        comma = dbp.notna() & ((dbp - wrong).abs() <= DBP_SAME_AMOUNT * wrong)
+        df.loc[comma, f"{kind}_dbp_amount"] = wp_amount[comma]
+        df.loc[comma, f"{kind}_dbp_currency"] = wp_cur[comma]
+        df[f"dbp_{kind}_comma_fixed"] = comma
     return df
 
 
@@ -256,14 +264,17 @@ def _close(a, b) -> bool:
     return 1 / CONFLICT_RATIO <= a / b <= CONFLICT_RATIO
 
 
-def majority_choice(vals: pd.DataFrame) -> pd.Series:
-    """Sursa aleasă prin majoritate, pentru fiecare film. `vals` are coloanele în ordinea
-    de prioritate. Din fiecare grup SOURCE_GROUP intră un reprezentant: sursa grupului cu
-    cea mai mare prioritate. Sprijinul unui reprezentant = câți reprezentanți (inclusiv el)
-    sunt la ±25% de el. Rămâne sursa prioritară dacă are sprijinul maxim; altfel, cea mai
-    prioritară sursă cu sprijin maxim."""
+def majority_choice(vals: pd.DataFrame, median: bool = True) -> tuple[pd.Series, pd.Series]:
+    """Sursa aleasă prin majoritate, pentru fiecare film, și dacă a decis mediana. `vals` are
+    coloanele în ordinea de prioritate. Din fiecare grup SOURCE_GROUP intră un reprezentant:
+    sursa grupului cu cea mai mare prioritate. Sprijinul unui reprezentant = câți reprezentanți
+    (inclusiv el) sunt la ±25% de el. Rămâne sursa prioritară dacă are sprijinul maxim; altfel,
+    cea mai prioritară sursă cu sprijin maxim.
+    Cu median=True (#52): când sunt cel puțin 3 reprezentanți și toți se contrazic (sprijin
+    maxim 1), câștigă reprezentantul cu valoarea din mijloc, nu cel mai prioritar. Cu 2
+    reprezentanți în dezacord decide în continuare prioritatea."""
     names = list(vals.columns)
-    chosen = []
+    chosen, by_median = [], []
     for row in vals.to_numpy(dtype=float):
         reps, seen = [], set()
         for name, v in zip(names, row):
@@ -272,18 +283,28 @@ def majority_choice(vals: pd.DataFrame) -> pd.Series:
                 reps.append((name, v))
         if not reps:
             chosen.append(None)
+            by_median.append(False)
             continue
         support = [sum(_close(v, w) for _, w in reps) for _, v in reps]
+        if median and len(reps) >= 3 and max(support) == 1:
+            ordered = sorted(reps, key=lambda r: r[1])
+            chosen.append(ordered[(len(ordered) - 1) // 2][0])  # valoarea din mijloc
+            by_median.append(True)
+            continue
         chosen.append(reps[support.index(max(support))][0])   # primul cu maxim = cel mai prioritar
-    return pd.Series(chosen, index=vals.index, dtype=object)
+        by_median.append(False)
+    return (pd.Series(chosen, index=vals.index, dtype=object),
+            pd.Series(by_median, index=vals.index, dtype=bool))
 
 
-def choose_value(df: pd.DataFrame, sources: dict, prefix: str, majority: bool = False) -> pd.DataFrame:
+def choose_value(df: pd.DataFrame, sources: dict, prefix: str, majority: bool = False,
+                 median: bool = True) -> pd.DataFrame:
     """Valoarea finală `prefix` și sursa ei. `sources` = {sursă: coloană} în ordinea de prioritate;
     cu majority=True, sursa vine din majority_choice (doar pentru buget)."""
     vals = pd.DataFrame({name: df[col] for name, col in sources.items()})
+    df[f"_{prefix}_by_median"] = False
     if majority:
-        first = majority_choice(vals)
+        first, df[f"_{prefix}_by_median"] = majority_choice(vals, median)
     else:
         first = vals.notna().idxmax(axis=1).where(vals.notna().any(axis=1))
     df[prefix] = [vals.at[i, s] if isinstance(s, str) else np.nan for i, s in zip(vals.index, first)]
@@ -372,7 +393,8 @@ def count_gross_only(manifest) -> int:
 
 def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "roi-recalculat",
           budget_choice: str = "majoritate", budget_sources: dict = None,
-          gross_sources: dict = None, fx: dict = None, stats: dict = None) -> pd.DataFrame:
+          gross_sources: dict = None, fx: dict = None, stats: dict = None,
+          median: bool = True) -> pd.DataFrame:
     budget_sources = budget_sources or BUDGET_SOURCES
     gross_sources = gross_sources or GROSS_SOURCES
     fx = load_fx() if fx is None else fx
@@ -404,7 +426,7 @@ def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "
     for col in gross_sources.values():
         df[col] = _plausible(df[col], *GROSS_RANGE)
 
-    df = choose_value(df, budget_sources, "budget", majority=budget_choice == "majoritate")
+    df = choose_value(df, budget_sources, "budget", majority=budget_choice == "majoritate", median=median)
     df = choose_value(df, gross_sources, "worldwide_gross")
     df = df.rename(columns={f"{p}worldwide_gross_{k}": f"{p}gross_{k}" for p in ("", "_")
                             for k in ("source", "n_sources", "conflict", "n_agree", "n_agree_raw")})
@@ -476,21 +498,9 @@ def clean(df: pd.DataFrame, funnel: list, gross_only: int = 0, roi_rule: str = "
     is_tv = df["genres"].apply(lambda g: g is not None and "TV Movie" in list(g))
     step("film TV", ~is_tv, "filme TV (n-au rulat în cinema)")
 
-    by_distributor = df["distributor_wp"].fillna("").str.strip().str.match(STREAMING_DISTRIBUTORS)
-    digital_days = (df["first_digital"] - df["first_theatrical"]).dt.days
-    by_digital = (digital_days <= STREAMING_DIGITAL_DAYS) & (df["first_theatrical"].dt.year >= STREAMING_DIGITAL_FROM)
-    streaming = (by_distributor | by_digital) & (df["roi"] < STREAMING_MAX_ROI)
-    stats["streaming"] = {
-        "distribuitor": int((streaming & by_distributor & ~by_digital).sum()),
-        "digital": int((streaming & by_digital & ~by_distributor).sum()),
-        "ambele": int((streaming & by_distributor & by_digital).sum()),
-        "fără date TMDB": int(df["first_theatrical"].isna().sum()),
-        "titluri": df.loc[streaming].sort_values("release_date")["title"].head(20).tolist(),
-    }
-    step("streaming", ~streaming,
-         f"lansare de streaming (distribuitor Netflix, Amazon, Apple TV+, Disney+ ... sau lansare digitală "
-         f"la cel mult {STREAMING_DIGITAL_DAYS} de zile după cinema) cu încasări sub "
-         f"{int(STREAMING_MAX_ROI * 100)}% din buget: lansarea în cinema a fost doar simbolică")
+    # Unde era pasul „streaming” (#45): filmele de aici, pentru comparația din raport (#52)
+    stats["pre_streaming"] = df[["tmdb_id", "title", "distributor_wp", "roi", "release_date", "vote_count",
+                                 "runtime"]].copy()
     runtime = pd.to_numeric(df["runtime"], errors="coerce")
     step("scurtmetraj", ~runtime.between(1, MIN_RUNTIME - 1), f"scurtmetraje (sub {MIN_RUNTIME} min)")
 
@@ -572,6 +582,42 @@ def franchise_features(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     return (prior >= 1).astype(int), prior.astype("Int64")
 
 
+def is_streaming_distributor(distributor: pd.Series) -> pd.Series:
+    """Distribuitorul principal din infobox e un serviciu de streaming (Netflix, Amazon Studios ...)."""
+    return distributor.fillna("").astype(str).str.strip().str.match(STREAMING_DISTRIBUTORS)
+
+
+def legacy_streaming(df: pd.DataFrame) -> pd.DataFrame:
+    """Filtrul vechi „streaming” (#45), doar pentru comparație: by_distributor, by_digital (lansare
+    digitală TMDB, tipul 4, la cel mult 30 de zile după cinema, din 2005) și removed = semnal și
+    ROI < 0,05. Datele de lansare vin din data/interim/tmdb_release_dates.parquet."""
+    rd = pd.read_parquet(INTERIM / "tmdb_release_dates.parquet").drop_duplicates("tmdb_id").set_index("tmdb_id")
+    tid = pd.to_numeric(df["tmdb_id"], errors="coerce")
+    theatrical = pd.to_datetime(tid.map(rd["first_theatrical"]))
+    digital = pd.to_datetime(tid.map(rd["first_digital"]))
+    by_digital = ((digital - theatrical).dt.days <= LEGACY_DIGITAL_DAYS) & (theatrical.dt.year >= LEGACY_DIGITAL_FROM)
+    by_distributor = is_streaming_distributor(df["distributor_wp"])
+    return pd.DataFrame({"by_distributor": by_distributor, "by_digital": by_digital,
+                         "removed": (by_distributor | by_digital) & (df["roi"] < LEGACY_MAX_ROI)}, index=df.index)
+
+
+def streaming_stats(pre: pd.DataFrame, final_ids: pd.Index, threshold: float) -> dict:
+    """De ce nu mai filtrăm (#52): ce prindea filtrul vechi și ce s-a întâmplat cu filmele lui."""
+    leg = legacy_streaming(pre)
+    prof = pre["roi"] >= threshold
+    removed = leg["removed"]
+    back = pre.index[removed]
+    return {"digital": int(leg["by_digital"].sum()), "digital_pct": float(leg["by_digital"].mean()),
+            "digital_prof": float(prof[leg["by_digital"]].mean()), "all_prof": float(prof.mean()),
+            "digital_titles": pre.loc[leg["by_digital"]].sort_values("vote_count", ascending=False)["title"].head(4).tolist(),
+            "removed": int(removed.sum()),
+            "only_digital": int((removed & leg["by_digital"] & ~leg["by_distributor"]).sum()),
+            "back": int(back.isin(final_ids).sum()), "dropped_later": int((~back.isin(final_ids)).sum()),
+            "dropped_extreme": int(pre.loc[back[~back.isin(final_ids)], "roi"].lt(ROI_EXTREME[0]).sum()),
+            "dropped_titles": pre.loc[back[~back.isin(final_ids)], "title"].head(6).tolist(),
+            "back_prof": float(prof[back[back.isin(final_ids)]].mean()) if back.isin(final_ids).any() else 0.0}
+
+
 def keyword_stats(df: pd.DataFrame, threshold: float) -> dict:
     """Cât de mult țin keywords de popularitate (pentru raport)."""
     kws = df["keywords"].apply(lambda k: [w.strip().lower() for w in _as_list(k)])
@@ -583,6 +629,17 @@ def keyword_stats(df: pd.DataFrame, threshold: float) -> dict:
             "corr_profitable": float(np.corrcoef(n_kw, prof)[0, 1]),
             "none": (int((n_kw == 0).sum()), float(prof[n_kw == 0].mean())),
             "stingers": (int(stingers.sum()), float(prof[stingers].mean()))}
+
+
+def comma_stats(df: pd.DataFrame) -> dict:
+    """Sumele din infobox citite altfel datorită virgulei zecimale (#52), în dataset-ul final."""
+    out = {}
+    for kind in ("budget", "gross"):
+        fixed = df[f"{kind}_wp_misread"].notna() & df[f"{kind}_wp_amount"].notna()
+        chosen = fixed & ((df[f"{kind}_source"] == "wikipedia") | df[f"dbp_{kind}_comma_fixed"]
+                          & (df[f"{kind}_source"] == "dbpedia"))
+        out[kind] = (int(fixed.sum()), int(chosen.sum()), int(df[f"dbp_{kind}_comma_fixed"].sum()))
+    return out
 
 
 def franchise_stats(df: pd.DataFrame, threshold: float) -> dict:
@@ -619,6 +676,8 @@ def features(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
     out["major_distributor"] = df["distributor_wp"].fillna("").str.strip().str.match(
         MAJOR_DISTRIBUTORS).astype(int)
     out["major_any"] = (out["major_studio"] | out["major_distributor"]).astype(int)
+    # Distribuitor de streaming (#52): se știe înainte de lansare, deci e o caracteristică legitimă
+    out["streaming_distributor"] = is_streaming_distributor(df["distributor_wp"]).astype(int)
 
     # 4–6. Data lansării
     out["release_date"] = df["release_date"].dt.strftime("%Y-%m-%d")
@@ -758,6 +817,10 @@ def currency_section(out: pd.DataFrame, stats: dict) -> str:
         return pd.Series([out.at[i, f"{kind}_{p}_currency"] for i, p in src.items()], index=out.index)
     non_usd = (chosen_currency("budget") != "USD") | (chosen_currency("gross") != "USD")
     us_share = out.loc[non_usd, "country_us"].mean()
+    n_dbp = sum(stats.get("comma", {}).get(k, (0, 0, 0))[2] for k in ("budget", "gross"))
+    comma_dbp_text = (f"DBpedia copiase suma greșită la {_n(n_dbp)} filme și primește valoarea corectată din infobox."
+                      if n_dbp else "DBpedia nu are suma greșită la niciun film (de obicei nu are deloc aceste sume); "
+                                    "dacă ar avea-o, ar primi valoarea corectată din infobox.")
     return f"""## Monede
 
 Bugetul și încasările se iau în moneda în care sunt scrise (`budget_<sursă>_amount`, `budget_<sursă>_currency`, la fel pentru încasări) și se convertesc în USD cu cursul mediu al anului lansării (World Bank, indicatorul `PA.NUS.FCRF`, licență CC BY 4.0; `fx_year`, `budget_fx_rate`, `gross_fx_rate`). Abia apoi se aplică regulile de mai sus: intervalele plauzibile, alegerea prin majoritate, toleranța de ±25% și regula pentru ROI extrem.
@@ -776,39 +839,28 @@ Bugetul și încasările se iau în moneda în care sunt scrise (`budget_<sursă
 Seria World Bank începe în 1960: pentru filmele din 1950–1959 nu folosim alt curs (nu inventăm valori), deci filmele din anii '50 cu sume doar în altă monedă se pierd. Monedele redenominate (Brazilia înainte de 1994, Turcia înainte de 2005) apar în serie în unitatea de azi; anii lor au aproape toți hiperinflație, iar restul cad la verificarea intervalelor plauzibile.
 
 - DBpedia marchează orice sumă ca USD, deși uneori a citit „A$2,417,000” sau „MXN$142.3 million”. Când suma DBpedia e chiar prima sumă din infobox-ul Wikipedia, iar aceea e în altă monedă, DBpedia primește moneda din infobox: {_n(stats.get("dbp_budget_fixed", 0))} bugete și {_n(stats.get("dbp_gross_fixed", 0))} încasări.
+- Virgula zecimală europeană (#52): „€13,7 million” înseamnă 13,7 milioane, nu 137. O virgulă urmată de 1–2 cifre și de o unitate e zecimală; urmată de 3 cifre rămâne separator de mii („1,250 million”). În dataset, {_n(stats.get("comma", {}).get("budget", (0, 0, 0))[0])} bugete și {_n(stats.get("comma", {}).get("gross", (0, 0, 0))[0])} încasări din infobox sunt citite acum corect ({_n(stats.get("comma", {}).get("budget", (0, 0, 0))[1] + stats.get("comma", {}).get("gross", (0, 0, 0))[1])} dintre ele sunt chiar valoarea folosită). {comma_dbp_text}
 - Simboluri ambigue („¥” = JPY sau CNY, „kr” = SEK / NOK / DKK, „Rs”, „$”) se lămuresc după țara de producție din TMDB. Dacă tot rămân ambigue, suma e ignorată: {_n(stats.get("wp_ambiguous_budget", 0))} bugete și {_n(stats.get("wp_ambiguous_gross", 0))} încasări din Wikipedia.
 - Un „$” simplu înseamnă USD, cu o excepție: un film fără SUA printre țările de producție, dar dintr-o țară cu dolar propriu (Australia, Canada, Hong Kong, Noua Zeelandă, Mexic ...), primește moneda acelei țări. Limită: Wikidata are aceeași sumă marcată USD la multe dintre aceste filme, dar și acolo valorile sunt adesea importate automat din infobox, deci nu e o confirmare independentă.
 - Limită: cursul e media anului lansării; bugetul se cheltuie de obicei cu 1–2 ani înainte, iar încasările vin în anul lansării și după.
 """
 
 
-def streaming_section(stats: dict) -> str:
+def streaming_section(out: pd.DataFrame, stats: dict) -> str:
     st = stats.get("streaming")
     if not st:
         return ""
-    total = st["distribuitor"] + st["digital"] + st["ambele"]
-    titles = ", ".join(st["titluri"])
-    return f"""## Filme de streaming
+    yes = out["streaming_distributor"] == 1
+    return f"""## Filme de streaming: o caracteristică, nu un filtru
 
-Populația proiectului sunt filmele lansate în cinema. Unele filme de streaming au avut doar o lansare simbolică în câteva săli (Hillbilly Elegy: buget 45 mil. $, încasări 38.852 $) și ar apărea ca „neprofitabile” fără să fi încercat să recupereze bugetul din bilete. Pasul „streaming” scoate un film doar dacă **ambele** condiții sunt adevărate:
+Până la #52, pasul „streaming” scotea un film dacă avea un semnal de streaming (distribuitor de streaming sau lansare digitală TMDB la cel mult {LEGACY_DIGITAL_DAYS} de zile după cinema) **și** ROI < {str(LEGACY_MAX_ROI).replace(".", ",")}. Filtrul avea două defecte, așa că nu mai filtrăm:
 
-1. distribuitorul principal din infobox e un serviciu de streaming (Netflix, Amazon Studios / Prime Video, Apple TV+, Disney+, Hulu, HBO Max, Max, Paramount+, Peacock) **sau** TMDB are o lansare digitală (tipul 4) la cel mult {STREAMING_DIGITAL_DAYS} de zile după prima lansare în cinema (tipurile 2 și 3);
-2. încasările sunt sub {int(STREAMING_MAX_ROI * 100)}% din buget (ROI < {str(STREAMING_MAX_ROI).replace(".", ",")}).
+1. **Alegea filmele după rezultat.** Condiția ROI < {str(LEGACY_MAX_ROI).replace(".", ",")} este chiar ținta pe care modelul trebuie s-o prezică: dintre filmele cu semnal de streaming ieșeau doar cele cu cel mai prost rezultat, ceea ce umfla artificial rata de filme profitabile.
+2. **Criteriul digital nu detecta filmele de streaming.** Prindea {_n(st["digital"])} filme ({_pct(st["digital_pct"])} din filmele rămase în acel punct), printre ele {", ".join(st["digital_titles"])}, iar rata lor de profitabile ({_pct(st["digital_prof"])}) era practic cea a tuturor filmelor ({_pct(st["all_prof"])}). Condiția pe ROI făcea aproape toată filtrarea: {_n(st["only_digital"])} din cele {_n(st["removed"])} filme scoase erau prinse doar de criteriul digital.
 
-Criteriul digital se aplică doar filmelor lansate din {STREAMING_DIGITAL_FROM}: înainte nu exista distribuție digitală, iar TMDB are uneori casete sau DVD-uri marcate ca „digital” chiar la data premierei (Eureka, 1983). O lansare digitală *înainte* de cinema (VOD mai întâi, apoi câteva săli) contează și ea.
+Acum distribuitorul de streaming e o **caracteristică**, `streaming_distributor`: 1 dacă distribuitorul principal din infobox e Netflix, Amazon Studios / Prime Video, Apple TV+, Disney+, Hulu, HBO Max, Max, Paramount+ sau Peacock. Se știe înainte de lansare. {_n(int(yes.sum()))} filme au `streaming_distributor` = 1, cu {_pct(out.loc[yes, "profitable"].mean())} profitabile, față de {_pct(out.loc[~yes, "profitable"].mean())} la restul.
 
-A doua condiție păstrează filmele de streaming care au rulat cu adevărat în cinema (Manchester by the Sea, distribuit de Amazon Studios).
-
-| Criteriul îndeplinit | Filme scoase |
-|---|---|
-| doar distribuitorul | {_n(st["distribuitor"])} |
-| doar lansarea digitală | {_n(st["digital"])} |
-| amândouă | {_n(st["ambele"])} |
-| **total** | **{_n(total)}** |
-
-Primele {len(st["titluri"])} (după data lansării): {titles}.
-
-Datele de lansare pe tipuri vin din răspunsurile TMDB deja descărcate (`python extraction/tmdb.py --release-dates`). Lipsesc pentru {_n(st["fără date TMDB"])} filme (detaliile TMDB adăugate la manifest nu sunt în arhiva din Releases); la ele contează doar distribuitorul.
+Dintre cele {_n(st["removed"])} filme pe care le scotea filtrul vechi, {_n(st["back"])} sunt din nou în dataset, toate neprofitabile (firesc: aveau ROI < {str(LEGACY_MAX_ROI).replace(".", ",")}); de aceea rata de profitabile scade puțin. Celelalte {_n(st["dropped_later"])} ies în continuare la pașii următori: {_n(st["dropped_extreme"])} la „ROI extrem” (ROI sub 0,001 pe care nu-l confirmă o sursă independentă){f", {_n(st['dropped_later'] - st['dropped_extreme'])} la „scurtmetraj”" if st["dropped_later"] > st["dropped_extreme"] else ""}: {", ".join(st["dropped_titles"])}. `extraction/sensitivity.py` arată ținta și cu filtrul vechi.
 """
 
 
@@ -977,7 +1029,7 @@ def write_report(out: pd.DataFrame, funnel: list, args, stats: dict = None) -> N
                       for c in ["director_prev_mean_roi", "director_prev_mean_log_roi",
                                 "director_prev_profitable_rate", "cast_prev_mean_roi",
                                 "cast_prev_mean_log_roi", "cast_prev_profitable_rate"]])
-    budget_rule = "" if args.budget_choice == "prioritate" else f""", dar prin **majoritate**: din fiecare grup independent (tmdb, wikidata, wiki = dbpedia/wikipedia) intră o singură valoare, a sursei celei mai prioritare din grup. Câștigă valoarea cu care sunt de acord (la ±25%) cele mai multe grupuri; la egalitate rămâne ordinea de mai sus. Așa, o greșeală izolată a TMDB nu mai câștigă doar pentru că TMDB e primul (Dragon Ball Super: Broly: TMDB 1 mil. $, Wikidata și Wikipedia 8,5 mil. $). Limită: Wikidata are exact aceeași valoare ca Wikipedia la {_same_share(out, "budget_wd", "budget_wp")} din bugete, deci și „majoritatea” poate fi uneori aceeași informație copiată."""
+    budget_rule = "" if args.budget_choice == "prioritate" else f""", dar prin **majoritate**: din fiecare grup independent (tmdb, wikidata, wiki = dbpedia/wikipedia) intră o singură valoare, a sursei celei mai prioritare din grup. Câștigă valoarea cu care sunt de acord (la ±25%) cele mai multe grupuri; la egalitate rămâne ordinea de mai sus. Așa, o greșeală izolată a TMDB nu mai câștigă doar pentru că TMDB e primul (Dragon Ball Super: Broly: TMDB 1 mil. $, Wikidata și Wikipedia 8,5 mil. $). Când toate cele 3 grupuri se contrazic (niciunul la ±25% de altul), câștigă valoarea din mijloc, nu sursa prioritară (#52): {_n(stats.get("budget_median", 0))} filme au bugetul ales prin mediană (3 Idiots: TMDB 50 mil. $, Wikipedia 11,4 mil. $, Wikidata 7,2 mil. $ → 11,4 mil. $). Limită: Wikidata are exact aceeași valoare ca Wikipedia la {_same_share(out, "budget_wd", "budget_wp")} din bugete, deci și „majoritatea” poate fi uneori aceeași informație copiată."""
     kw = stats.get("keywords", {"corr_votes": 0, "corr_profitable": 0, "none": (0, 0), "stingers": (0, 0)})
     franchise_table = "\n".join(
         ["  | Vechea definiție | Filme | % profitabile |", "  |---|---|---|"]
@@ -995,7 +1047,7 @@ Generat cu `python extraction/integrate.py --threshold {threshold} --roi-rule {a
 
 {_md_table(funnel)}
 
-{streaming_section(stats)}
+{streaming_section(out, stats)}
 {dropped_section(out, stats)}
 {target_quality_section(out, stats)}
 ## Ținta
@@ -1096,6 +1148,9 @@ def main() -> None:
     df = clean(df, funnel, gross_only=count_gross_only(df.index), roi_rule=args.roi_rule,
                budget_choice=args.budget_choice, stats=stats)
     stats["franchise"] = franchise_stats(df, args.threshold)
+    stats["streaming"] = streaming_stats(stats.pop("pre_streaming"), df.index, args.threshold)
+    stats["comma"] = comma_stats(df)
+    stats["budget_median"] = int(df["_budget_by_median"].sum())
     stats["prev_recent"] = recent_prior_count(df)
     stats["gross_currency"] = df["_gross_currency"].reset_index(drop=True)
     stats["keywords"] = keyword_stats(df, args.threshold)

@@ -3,13 +3,14 @@ Test de sensibilitate (#45): cât de mult depinde ținta `profitable` de decizii
 
 Refolosește funcțiile din integrate.py (aceleași date din data/interim/, fără cereri HTTP) și
 schimbă câte o singură decizie față de varianta implicită:
-  - alegerea bugetului: majoritate (implicit) / prioritate TMDB → DBpedia → Wikidata → Wikipedia /
+  - alegerea bugetului: majoritate (implicit) / majoritate fără mediană (#52) / prioritate TMDB → DBpedia → Wikidata → Wikipedia /
     prioritate cu Wikipedia prima
   - alegerea încasărilor: prioritatea curentă (Wikipedia prima) / TMDB prima
   - --roi-rule: vechi / surse-independente / roi-recalculat (implicit)
   - pragul de profitabilitate: 2 / 2,5 (implicit) / 3
   - calitatea încasărilor: toate filmele (implicit) / fără încasările parțiale (o singură piață sau
     „rentals”, #47, #49) / și fără încasările în moneda locală fără „worldwide” (#49)
+  - streaming: fără filtru (implicit) / filtrul vechi: semnal de streaming și ROI < 0,05 (#52)
 
 Pentru fiecare variantă: câte filme rămân, % profitabile și câte etichete `profitable` se
 schimbă față de varianta implicită (la filmele prezente în ambele), plus filmele intrate / ieșite.
@@ -26,12 +27,13 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from extraction.integrate import (BUDGET_SOURCES, GROSS_SOURCES, INTERIM, _md_table, _n, _pct,
-                                  clean, load_fx, load_sources)
+                                  clean, legacy_streaming, load_fx, load_sources)
 from extraction.utils import PROJECT_ROOT
 
 REPORT = PROJECT_ROOT / "docs" / "sensitivity_report.md"
 DEFAULT = {"budget_choice": "majoritate", "budget_sources": BUDGET_SOURCES, "gross_sources": GROSS_SOURCES,
-           "roi_rule": "roi-recalculat", "threshold": 2.5, "drop_partial_gross": 0}
+           "roi_rule": "roi-recalculat", "threshold": 2.5, "drop_partial_gross": 0, "median": True,
+           "legacy_streaming": False}
 
 
 def _order(sources: dict, first: str) -> dict:
@@ -41,6 +43,7 @@ def _order(sources: dict, first: str) -> dict:
 VARIANTS = [
     # (grup, nume, schimbarea față de DEFAULT)
     ("Buget", "majoritate (implicit)", {}),
+    ("Buget", "majoritate fără mediană (vechi)", {"median": False}),
     ("Buget", "prioritate tmdb → dbpedia → wikidata → wikipedia", {"budget_choice": "prioritate"}),
     ("Buget", "prioritate wikipedia → tmdb → dbpedia → wikidata",
      {"budget_choice": "prioritate", "budget_sources": _order(BUDGET_SOURCES, "wikipedia")}),
@@ -52,6 +55,8 @@ VARIANTS = [
     ("Prag", "2", {"threshold": 2.0}),
     ("Prag", "2,5 (implicit)", {}),
     ("Prag", "3", {"threshold": 3.0}),
+    ("Streaming", "fără filtru (implicit)", {}),
+    ("Streaming", "filtrul vechi (semnal de streaming și ROI < 0,05)", {"legacy_streaming": True}),
     ("Calitatea încasărilor", "toate filmele (implicit)", {}),
     ("Calitatea încasărilor", "fără încasări parțiale (o singură piață, rentals)", {"drop_partial_gross": 1}),
     ("Calitatea încasărilor", "și fără moneda locală fără „worldwide”", {"drop_partial_gross": 2}),
@@ -61,7 +66,10 @@ VARIANTS = [
 def run(base: pd.DataFrame, fx: dict, cfg: dict) -> pd.DataFrame:
     """`profitable` (și dacă sursele sunt în dezacord) pentru filmele care trec curățarea."""
     df = clean(base.copy(), [], roi_rule=cfg["roi_rule"], budget_choice=cfg["budget_choice"],
-               budget_sources=cfg["budget_sources"], gross_sources=cfg["gross_sources"], fx=fx, stats={})
+               budget_sources=cfg["budget_sources"], gross_sources=cfg["gross_sources"], fx=fx, stats={},
+               median=cfg["median"])
+    if cfg["legacy_streaming"]:
+        df = df[~legacy_streaming(df)["removed"]]
     if cfg["drop_partial_gross"] >= 1:
         df = df[~(df["gross_is_single_market"] | df["gross_is_rental"])]
     if cfg["drop_partial_gross"] >= 2:
@@ -88,6 +96,7 @@ def write(results: list[dict]) -> None:
     others = [r for r in results if not r["_default"]]
     worst = max(others, key=lambda r: r["_changed"])
     film_rules = [r for r in others if r["Grup"] in ("Buget", "Încasări", "ROI extrem")]
+    legacy = next(r for r in others if r["Grup"] == "Streaming")
     partial, local = [r for r in others if r["Grup"] == "Calitatea încasărilor"]
     worst_rule = max(film_rules, key=lambda r: r["_changed"])
     pos = [r["_pos"] for r in film_rules] + [default["_pos"]]
@@ -113,6 +122,7 @@ Varianta implicită: **{_n(default["Filme"])} filme, {default["% profitabile"]} 
 
 - Deciziile despre date (ce buget sau ce încasări alegem, ce ROI extrem păstrăm) mută rata de filme profitabile doar între {_pct(min(pos))} și {_pct(max(pos))} și schimbă cel mult {_pct(worst_rule["_changed"])} din etichete ({worst_rule["Grup"].lower()}: {worst_rule["Varianta"]}). Ținta e **robustă** la aceste alegeri: doar câteva sute de filme, cele cu surse în dezacord, își schimbă clasa.
 - Fără filmele cu încasări parțiale (o singură piață sau „rentals”) rămân {_n(partial["Filme"])} filme, cu {partial["% profitabile"]} profitabile; fără și cele în moneda locală fără „worldwide”, {_n(local["Filme"])} filme, cu {local["% profitabile"]} profitabile (implicit: {default["% profitabile"]}). Etichetele celorlalte filme nu se schimbă: rata crește doar pentru că se scot filme etichetate, cel mai probabil, greșit ca neprofitabile.
+- Filtrul vechi „streaming” (#52) ar scoate {_n(default["Filme"] - legacy["Filme"])} filme și ar urca rata de profitabile la {legacy["% profitabile"]}, față de {default["% profitabile"]}: scotea filme alese după rezultat (ROI < 0,05), deci umfla rata. Acum distribuitorul de streaming e o caracteristică (`streaming_distributor`), nu un filtru.
 - Pragul contează mult mai mult: varianta cu cel mai mare efect e {worst["Grup"].lower()} {worst["Varianta"]}, cu {_pct(worst["_changed"])} etichete schimbate. Pragul de 2,5 e o convenție (bugetul nu include marketingul, iar cinematografele păstrează aproximativ jumătate din bilete), deci rezultatele modelului trebuie raportate și pentru pragurile 2 și 3, nu doar pentru 2,5.
 - Dintre cele {_n(len(flips))} filme care își schimbă eticheta într-una din variantele despre date, {_pct(conflict_share)} au surse în dezacord la buget sau la încasări (`budget_conflict` / `gross_conflict`), față de {_pct(base_conflict)} în tot dataset-ul. Incertitudinea e concentrată în filmele cu surse care nu se pun de acord, nu în regula aleasă.
 """

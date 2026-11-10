@@ -58,7 +58,7 @@ python extraction/wikipedia.py           # după wikidata.py (și dbpedia.py, tm
 ```
 
 - `wikidata.parquet`: cost (P2130) și box office mondial (P2142) în USD (`budget_wd`, `gross_wd`) și în moneda lor (`budget_wd_amount`, `budget_wd_currency`, cod ISO), `is_adaptation` (P144) și `adaptation_type` (book, comics, tv, video_game, stage, film, true_story, franchise, other), titlul articolului en.wikipedia, `tmdb_id`.
-- `wikipedia.parquet`: `| budget =`, `| gross =`, `| distributor =` și `| based_on =` din infobox, pentru toate filmele cu articol. Prima sumă din câmp (sau cea marcată „worldwide” dintr-o listă) se păstrează în moneda ei: `budget_wp_amount`, `budget_wp_currency`; `budget_wp` e suma în USD scrisă în infobox (ea însăși sau cea din paranteză: `£800,000 ($1.4 million)`). Simbolurile ambigue (`¥`, `kr`, `Rs`, `$` la un film fără SUA dintr-o țară cu dolar propriu) se lămuresc după țara de producție TMDB; altfel `budget_wp_note = ambiguous` și suma se ignoră. `has_budget_elsewhere = False` marchează bugetele noi (fără buget USD din altă sursă). Intervalele (`$10–15 million`) dau mijlocul, cu `budget_wp_range = True`. `distributor_wp` e distribuitorul principal (cel marcat SUA/internațional, altfel primul din listă).
+- `wikipedia.parquet`: `| budget =`, `| gross =`, `| distributor =` și `| based_on =` din infobox, pentru toate filmele cu articol. Prima sumă din câmp (sau cea marcată „worldwide” dintr-o listă) se păstrează în moneda ei: `budget_wp_amount`, `budget_wp_currency`; `budget_wp` e suma în USD scrisă în infobox (ea însăși sau cea din paranteză: `£800,000 ($1.4 million)`). Simbolurile ambigue (`¥`, `kr`, `Rs`, `$` la un film fără SUA dintr-o țară cu dolar propriu) se lămuresc după țara de producție TMDB; altfel `budget_wp_note = ambiguous` și suma se ignoră. `has_budget_elsewhere = False` marchează bugetele noi (fără buget USD din altă sursă). Intervalele (`$10–15 million`) dau mijlocul, cu `budget_wp_range = True`. Virgula urmată de 1–2 cifre și de o unitate e zecimală (`€13,7 million` = 13,7 milioane; `budget_wp_misread` = cum o citea parserul vechi), urmată de 3 cifre e separator de mii (#52). `distributor_wp` e distribuitorul principal (cel marcat SUA/internațional, altfel primul din listă).
 
 ## Premii ale regizorului și actorilor (#35)
 
@@ -73,7 +73,7 @@ python extraction/awards.py          # toate filmele din manifest (~5 min fără
 
 ```bash
 python extraction/fx_rates.py                 # World Bank PA.NUS.FCRF -> data/interim/fx_rates.parquet
-python extraction/tmdb.py --release-dates     # din cache-ul TMDB -> data/interim/tmdb_release_dates.parquet
+python extraction/tmdb.py --release-dates     # din cache-ul TMDB -> data/interim/tmdb_release_dates.parquet (doar pentru comparația cu filtrul vechi de streaming)
 ```
 
 `fx_rates.parquet`: unități de monedă locală pentru 1 USD, media anului, 1960–2024 ([World Bank, CC BY 4.0](https://data.worldbank.org/indicator/PA.NUS.FCRF)). Zona euro: moneda națională (DEM, FRF, ITL ...) până la euro, EUR din 1999. `hyperinflation = True` când cursul s-a schimbat cu peste 50% față de anul anterior; acei ani nu se folosesc. `tmdb_release_dates.parquet`: prima lansare în cinema (tipurile 2–3) și prima lansare digitală (tipul 4) per film, citite din răspunsurile TMDB deja descărcate.
@@ -100,7 +100,7 @@ Opțiuni:
 
 Citește doar `data/interim/` (fără cereri HTTP, câteva secunde) și scrie `data/processed/movies_dataset.parquet` (un rând per film; datele se păstrează doar în parquet) și [docs/integration_report.md](docs/integration_report.md): pâlnia de curățare (inclusiv filmele fără buget și cele de streaming), monedele, profilul filmelor scoase, marile studiouri și de ce excludem coloanele META.
 
-Filmele de streaming cu o lansare doar simbolică în cinema ies din populație (pasul „streaming”): distribuitor de streaming sau lansare digitală la cel mult 30 de zile după cinema, **și** încasări sub 5% din buget.
+Filmele de streaming **nu** se mai filtrează (#52): vechiul pas „streaming” alegea filmele după rezultat (ROI < 0,05), iar criteriul lui digital nu detecta filmele de streaming. Distribuitorul de streaming e acum o caracteristică, `streaming_distributor`; filtrul vechi apare doar ca variantă în `sensitivity.py`.
 
 **Ce intră în model:** `extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; `feature_columns(df)` dă caracteristicile, iar `python extraction/test_columns.py` verifică că nicio coloană META / LEAKAGE / TARGETS nu e printre ele și că fiecare coloană are exact o categorie. Rulat de două ori, produce același fișier.
 
@@ -125,6 +125,7 @@ Filmele de streaming cu o lansare doar simbolică în cinema ies din populație 
 | `major_studio` | 1 dacă o companie de producție e Disney, Warner Bros., Universal, Paramount, Sony/Columbia, 20th Century sau Lionsgate (inclusiv diviziile de film, după ID-ul TMDB) |
 | `major_distributor` | 1 dacă distribuitorul principal din infobox e unul dintre aceleași studiouri sau o divizie (Buena Vista, New Line, Focus Features, TriStar, Summit ...), după nume |
 | `major_any` | `major_studio` sau `major_distributor` |
+| `streaming_distributor` | 1 dacă distribuitorul principal din infobox e un serviciu de streaming (Netflix, Amazon Studios / Prime Video, Apple TV+, Disney+, Hulu, HBO Max, Max, Paramount+, Peacock), #52 |
 | `release_date`, `release_year`, `release_month`, `release_weekday` | data lansării din TMDB; `release_weekday` 0 = luni |
 | `genres`, `genre_*` | genurile TMDB (separate prin `\|`) și one-hot |
 | `runtime_min` | durata în minute (gol = necunoscută) |
@@ -159,6 +160,7 @@ Valorile lor ajung oricum indirect în date: infobox-urile Wikipedia le citează
 python extraction/test_utils.py       # cache și 404
 python extraction/test_wikipedia.py   # sumele din infobox, în orice monedă
 python extraction/test_columns.py     # coloanele excluse din model (după integrate.py)
+python -m pytest extraction           # toate testele de mai sus, cu pytest
 ```
 
 `test_utils.py` verifică că al doilea apel pe același URL vine din cache (fără request HTTP) și că un 404 returnează `None` fără excepție. `test_wikipedia.py` verifică parserul de sume (`A$2,417,000` → AUD, `{{INR|55 crore}}` → 5,5·10⁸ INR, `£800,000 ($1.4 million)` → GBP + USD scris explicit, `¥` rezolvat după țară).

@@ -7,3 +7,4 @@ python-dotenv>=1.0
 tqdm>=4.66
 rapidfuzz>=3.5
 aiohttp>=3.9
+pytest>=8.0
