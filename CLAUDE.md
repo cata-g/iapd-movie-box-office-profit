@@ -6,8 +6,8 @@ Predicția profitabilității filmelor lansate în cinema folosind **doar date d
 - Ținta continuă: `roi = worldwide_gross / budget`
 - Repo: https://github.com/cata-g/iapd-movie-box-office-profit
 
-## Faza 1 – Dataset propriu (17.911 filme; pragul cerut era 10.000)
-Dataset cu buget ȘI încasări mondiale (convertite în USD) + 18 caracteristici fără leakage. Cifrele curente: `docs/integration_report.md`.
+## Faza 1 – Dataset propriu (18.056 filme; pragul cerut era 10.000)
+Dataset cu buget ȘI încasări mondiale (convertite în USD) + 17 caracteristici fără leakage (keywords TMDB, `kw_*`, excluse în #54). Cifrele curente: `docs/integration_report.md`.
 Dataseturile gata (Kaggle etc.) **NU sunt permise** — totul se extrage de noi.
 
 ### Ordinea issue-urilor
@@ -57,6 +57,7 @@ logs/
 - **Fără** rating, voturi, popularitate sau încasări ca features de intrare
 - Istoricul regizorului/actorilor: calculat **doar din filmele lansate înainte** de filmul curent
 - `vote_average` și `vote_count` se păstrează **separat**, doar pentru experimentul leakage vs. no-leakage
+- **Keywords TMDB (`kw_*`)**: tot LEAKAGE, nu caracteristici (`extraction/columns.py`). Sunt adăugate de utilizatori, mai ales după lansare, iar filmele populare primesc mai multe (27% dintre filmele cu sub 50 de voturi au un keyword din top 30, 71% dintre cele cu peste 1.000). Rămân în dataset doar pentru experimentul leakage vs. no-leakage
 
 ## Cum lucrăm
 - Un branch per issue: `issue-<nr>-<slug>`

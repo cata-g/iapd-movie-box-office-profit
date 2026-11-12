@@ -10,7 +10,11 @@ Doar FEATURES intră în model. Restul se exclud explicit:
   META     de unde vin bugetul și încasările, sumele brute per sursă, monede și cursuri,
            calitatea datelor. Prezic ținta (un film cu încasări în toate cele 4 surse e mai
            cunoscut, deci mai des profitabil), dar nu sunt informații despre film: leakage.
-  LEAKAGE  vote_average, vote_count: doar pentru experimentul leakage vs. no-leakage
+  LEAKAGE  doar pentru experimentul leakage vs. no-leakage:
+           vote_average, vote_count: popularitatea și nota, adunate după lansare;
+           kw_* (top 30 keywords TMDB, #54): adăugate de utilizatori, mai ales după lansare, iar
+           filmele populare primesc mai multe (27% dintre filmele cu sub 50 de voturi au un keyword
+           din top 30, 71% dintre cele cu peste 1.000). Poartă deci un semnal de popularitate.
 
 Fiecare coloană trebuie să fie în exact o categorie (extraction/test_columns.py): o coloană
 nouă, necategorisită, face testul să pice. Numele cu `*` sunt tipare (fnmatch).
@@ -37,7 +41,7 @@ META = [
     "gross_is_local_currency",
 ]
 
-LEAKAGE = ["vote_average", "vote_count"]
+LEAKAGE = ["vote_average", "vote_count", "kw_*"]
 
 FEATURES = [
     "budget",
@@ -45,7 +49,7 @@ FEATURES = [
     "cast_award_noms_before", "cast_award_wins_before",
     "major_studio", "major_distributor", "major_any", "streaming_distributor",
     "release_year", "release_month", "release_weekday",
-    "genre_*", "runtime_min", "certification", "kw_*",
+    "genre_*", "runtime_min", "certification",
     "is_english", "original_language", "country_*",
     "is_franchise", "sequel_number", "is_adaptation", "adaptation_type",
     "director_prev_*", "cast_prev_*",
