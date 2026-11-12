@@ -102,7 +102,7 @@ Citește doar `data/interim/` (fără cereri HTTP, câteva secunde) și scrie `d
 
 Filmele de streaming **nu** se mai filtrează (#52): vechiul pas „streaming” alegea filmele după rezultat (ROI < 0,05), iar criteriul lui digital nu detecta filmele de streaming. Distribuitorul de streaming e acum o caracteristică, `streaming_distributor`; filtrul vechi apare doar ca variantă în `sensitivity.py`.
 
-**Ce intră în model:** `extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; `feature_columns(df)` dă caracteristicile, iar `python extraction/test_columns.py` verifică că nicio coloană META / LEAKAGE / TARGETS nu e printre ele și că fiecare coloană are exact o categorie. Rulat de două ori, produce același fișier.
+**Ce intră în model:** `extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; `feature_columns(df)` dă caracteristicile (50 de coloane), iar `python extraction/test_columns.py` verifică că nicio coloană META / LEAKAGE / TARGETS nu e printre ele (inclusiv `kw_*`, excluse din model în #54) și că fiecare coloană are exact o categorie. Rulat de două ori, produce același fișier.
 
 ### Dicționar de date
 
@@ -130,7 +130,6 @@ Filmele de streaming **nu** se mai filtrează (#52): vechiul pas „streaming”
 | `genres`, `genre_*` | genurile TMDB (separate prin `\|`) și one-hot |
 | `runtime_min` | durata în minute (gol = necunoscută) |
 | `certification` | G=0, PG=1, PG-13=2, R=3, NC-17=4 (gol = lipsă / NR) |
-| `kw_*` | one-hot pentru cele mai frecvente 30 de keywords TMDB din dataset, fără etichetele de ton (`amused`, `suspenseful`, … = reacția publicului, leakage) și fără cele care se află abia după lansare (`duringcreditsstinger`, `aftercreditsstinger`, `controversy` …, #47). Atenție: filmele populare au mai multe keywords, deci `kw_*` poartă și un semnal de popularitate (vezi raportul) |
 | `is_english`, `original_language` | limba originală: `en`, top 5 alte limbi sau `other` |
 | `country_{us,europe,asia,other}` | grupul țărilor de producție (un film poate avea mai multe) |
 | `is_franchise`, `sequel_number` | continuare: au apărut deja filme din aceeași colecție TMDB; câte (0 = primul film al seriei sau film independent). Primul film al unei serii nu contează ca franciză: colecția apare abia după ce succesul lui aduce o continuare (leakage, #47) |
@@ -143,7 +142,12 @@ Filmele de streaming **nu** se mai filtrează (#52): vechiul pas „streaming”
 
 **Surse, monede și calitatea datelor (META, nu intră în model):** `budget_source` / `gross_source` (sursa valorii finale), `*_n_sources` (câte surse au valoare), `*_n_agree` (câte surse independente sunt la ±25% de valoarea finală; DBpedia și Wikipedia contează o dată), `*_conflict` (max/min > 1,25), valorile brute în USD `budget_tmdb`, `budget_dbp`, `budget_wd`, `budget_wp`, `gross_wp`, `worldwide_gross_dbp`, `gross_wd`, `revenue_tmdb`, sumele în moneda lor `budget_<src>_amount` / `budget_<src>_currency` și `gross_<src>_amount` / `gross_<src>_currency` (`src` = tmdb, dbp, wd, wp), `roi_currency`, `fx_year`, `budget_fx_rate`, `gross_fx_rate` (cursul folosit; 1 = USD, gol = suma în USD din infobox), `budget_is_range` (bugetul final e mijlocul unui interval din infobox), `gross_is_domestic` / `gross_is_rental` (încasările alese sunt doar SUA/Canada, respectiv „rentals”: ROI subestimat, mai ales la filmele vechi, #47), `gross_is_single_market` (eticheta din infobox arată o singură piață, orice țară) și `gross_is_local_currency` (încasări în altă monedă, fără „worldwide”: de obicei doar cele de acasă; la filmele indiene, de obicei mondiale, #49). Ele prezic ținta (vezi raportul), deci ar fi leakage.
 
-**Doar pentru experimentul leakage vs. no-leakage:** `vote_average`, `vote_count`.
+**Doar pentru experimentul leakage vs. no-leakage (LEAKAGE, nu intră în model):**
+
+| Coloană | Descriere și motiv |
+|---|---|
+| `vote_average`, `vote_count` | nota și numărul de voturi TMDB, adunate după lansare |
+| `kw_*` | one-hot pentru cele mai frecvente 30 de keywords TMDB din dataset, fără etichetele de ton (`amused`, `suspenseful`, … = reacția publicului) și fără cele care se află abia după lansare (`duringcreditsstinger`, `aftercreditsstinger`, `controversy` …, #47). Excluse din model (#54): keywords-urile sunt adăugate de utilizatorii TMDB, mai ales după lansare, iar filmele populare primesc mai multe (27% dintre filmele cu sub 50 de voturi au un keyword din top 30, 71% dintre cele cu peste 1.000), deci poartă un semnal de popularitate |
 
 ## Surse excluse
 

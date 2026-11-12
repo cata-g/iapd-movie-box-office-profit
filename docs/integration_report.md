@@ -189,7 +189,7 @@ Față de `major_studio`, 2.364 filme trec în clasa „mare studio” doar prin
 
 ## De ce excludem coloanele META
 
-`extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; în model intră doar cele 80 din FEATURES (`feature_columns(df)`), iar `extraction/test_columns.py` verifică asta pe dataset-ul final. META sunt cele 41 coloane despre **date**, nu despre film: sursa valorii, câte surse au o valoare și câte sunt de acord, sumele brute, monedele și cursurile. Ele prezic ținta, pentru că un film cu încasări raportate peste tot e de obicei un film cunoscut, care a mers bine:
+`extraction/columns.py` împarte coloanele în TARGETS, IDS, META, LEAKAGE și FEATURES; în model intră doar cele 50 din FEATURES (`feature_columns(df)`), iar `extraction/test_columns.py` verifică asta pe dataset-ul final. META sunt cele 41 coloane despre **date**, nu despre film: sursa valorii, câte surse au o valoare și câte sunt de acord, sumele brute, monedele și cursurile. Ele prezic ținta, pentru că un film cu încasări raportate peste tot e de obicei un film cunoscut, care a mers bine:
 
 **% profitabile după numărul de surse cu încasări**
 
@@ -304,6 +304,6 @@ Media simplă aproape nu are legătură cu ținta; variantele noi au.
   Acum `is_franchise` = 1 doar pentru continuări, iar `sequel_number` = câte filme din serie au apărut înainte (0 = primul film sau film independent).
 - Am scos keywords ca `amused` sau `suspenseful`: arată cum a reacționat publicul, deci nu se știu înainte de lansare.
 - **Keywords de după lansare** (#47): `duringcreditsstinger` / `aftercreditsstinger` (scenă după generic) se află abia la vizionare și anunțau succesul (779 filme, 54,7% profitabile). Le-am scos, împreună cu `controversy`, `banned film` și altele asemănătoare.
-- **Limită rămasă:** keywords sunt adăugate de utilizatorii TMDB, după lansare. Filmele populare primesc mai multe: numărul de keywords se corelează 0,62 cu log(voturi) și 0,22 cu `profitable`, iar cele 2.613 filme fără niciun keyword au doar 23,6% profitabile. Chiar dacă fiecare keyword descrie conținutul, un vector `kw_*` plin de zerouri spune „film puțin cunoscut”. În experimentul cu leakage, merită comparat modelul cu și fără `kw_*`.
-- `vote_average` și `vote_count` rămân în tabel doar pentru experimentul cu leakage.
+- **Keywords excluse din model** (#54): keywords sunt adăugate de utilizatorii TMDB, mai ales după lansare, iar filmele populare primesc mai multe: numărul de keywords se corelează 0,62 cu log(voturi) și 0,22 cu `profitable`, iar cele 2.613 filme fără niciun keyword au doar 23,6% profitabile. Chiar dacă fiecare keyword descrie conținutul, un vector `kw_*` plin de zerouri spune „film puțin cunoscut”. De aceea coloanele `kw_*` sunt în categoria LEAKAGE din `extraction/columns.py`, lângă `vote_average` și `vote_count`: rămân în tabel doar pentru experimentul leakage vs. no-leakage și nu intră în `feature_columns(df)`.
+- `vote_average`, `vote_count` și `kw_*` rămân în tabel doar pentru experimentul cu leakage.
 - La antrenare, e mai sigur să împărțim filmele după an (vechi = antrenare, noi = test). La o împărțire aleatoare, istoricul unui film vechi ar putea folosi ROI-ul unui film din test.
