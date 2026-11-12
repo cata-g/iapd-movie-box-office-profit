@@ -32,6 +32,11 @@ def test_no_excluded_in_features(df: pd.DataFrame):
         assert not bad, f"coloane {name} printre caracteristici: {bad}"
     for col in ("profitable", "roi", "worldwide_gross", "vote_count", "gross_n_sources", "budget_source"):
         assert col not in features, f"{col} nu are voie să fie caracteristică"
+    # keywords TMDB: semnal de popularitate de după lansare (#54), doar pentru experimentul leakage
+    kw = [c for c in df.columns if c.startswith("kw_")]
+    assert kw, "dataset-ul trebuie să păstreze coloanele kw_* pentru experimentul leakage"
+    assert not [c for c in kw if c in features], "nicio coloană kw_* nu are voie să fie caracteristică"
+    assert all(categories(c) == ["LEAKAGE"] for c in kw), "coloanele kw_* trebuie să fie LEAKAGE"
     print(f"Test 1 passed: {len(features)} caracteristici, nicio coloană META / LEAKAGE / TARGETS.")
 
 
