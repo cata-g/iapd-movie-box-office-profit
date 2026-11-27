@@ -36,6 +36,7 @@ RATE_LIMITS: dict[str, float] = {
     "wikidata": 1 / 5,
     "dbpedia": 1.0,        # public SPARQL endpoint, be gentle
     "worldbank": 1.0,      # API World Bank (cursuri de schimb, #45)
+    "fred": 1.0,           # FRED, indicele prețurilor SUA (#40)
 }
 DEFAULT_RATE = 1.0
 

@@ -149,6 +149,15 @@ Filmele de streaming **nu** se mai filtrează (#52): vechiul pas „streaming”
 | `vote_average`, `vote_count` | nota și numărul de voturi TMDB, adunate după lansare |
 | `kw_*` | one-hot pentru cele mai frecvente 30 de keywords TMDB din dataset, fără etichetele de ton (`amused`, `suspenseful`, … = reacția publicului) și fără cele care se află abia după lansare (`duringcreditsstinger`, `aftercreditsstinger`, `controversy` …, #47). Excluse din model (#54): keywords-urile sunt adăugate de utilizatorii TMDB, mai ales după lansare, iar filmele populare primesc mai multe (27% dintre filmele cu sub 50 de voturi au un keyword din top 30, 71% dintre cele cu peste 1.000), deci poartă un semnal de popularitate |
 
+## Preprocesare pentru model (#40)
+
+```bash
+python extraction/cpi.py              # indicele prețurilor SUA (FRED CPIAUCNS) -> data/interim/cpi.parquet
+python modeling/preprocessing.py      # dimensiunile split-urilor și echilibrul claselor
+```
+
+`modeling/preprocessing.py` transformă dataset-ul final în matrici de antrenare: split temporal (train ≤ 2014, validare 2015–2018, test 2019–2024), indicatori pentru istoricul lipsă, log pe buget și ROI, bugetul în dolari 2024, luna și ziua pe cerc (sin/cos), one-hot și scalare, toate ajustate doar pe train. Strategia pentru fiecare coloană: `docs/preprocessing.md`.
+
 ## Surse excluse
 
 | Sursă | Motiv |
@@ -165,6 +174,7 @@ python extraction/test_utils.py       # cache și 404
 python extraction/test_wikipedia.py   # sumele din infobox, în orice monedă
 python extraction/test_columns.py     # coloanele excluse din model (după integrate.py)
 python -m pytest extraction           # toate testele de mai sus, cu pytest
+python -m pytest modeling             # preprocesarea: split, date lipsă, fit doar pe train
 ```
 
 `test_utils.py` verifică că al doilea apel pe același URL vine din cache (fără request HTTP) și că un 404 returnează `None` fără excepție. `test_wikipedia.py` verifică parserul de sume (`A$2,417,000` → AUD, `{{INR|55 crore}}` → 5,5·10⁸ INR, `£800,000 ($1.4 million)` → GBP + USD scris explicit, `¥` rezolvat după țară).

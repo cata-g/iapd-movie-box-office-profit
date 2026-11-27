@@ -8,3 +8,4 @@ tqdm>=4.66
 rapidfuzz>=3.5
 aiohttp>=3.9
 pytest>=8.0
+scikit-learn>=1.4
