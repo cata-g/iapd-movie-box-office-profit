@@ -1,0 +1,42 @@
+{
+  "clasificare": {
+    "Dummy (clasa majoritară)": {},
+    "Regresie logistică": {
+      "C": 0.01
+    },
+    "Regresie logistică + buget²": {
+      "C": 10
+    },
+    "Random Forest": {
+      "max_depth": null,
+      "min_samples_leaf": 5,
+      "max_features": 0.3
+    },
+    "Gradient boosting": {
+      "learning_rate": 0.03,
+      "max_leaf_nodes": 31,
+      "min_samples_leaf": 50,
+      "l2_regularization": 1.0
+    }
+  },
+  "regresie": {
+    "Dummy (mediana)": {},
+    "Ridge": {
+      "alpha": 100
+    },
+    "Ridge + buget²": {
+      "alpha": 10
+    },
+    "Random Forest": {
+      "max_depth": null,
+      "min_samples_leaf": 5,
+      "max_features": 0.3
+    },
+    "Gradient boosting": {
+      "learning_rate": 0.1,
+      "max_leaf_nodes": 15,
+      "min_samples_leaf": 20,
+      "l2_regularization": 0.0
+    }
+  }
+}

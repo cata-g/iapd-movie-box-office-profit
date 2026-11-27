@@ -1,0 +1,21 @@
+experiment,model,F1,ROC-AUC,PR-AUC,precision,recall,accuracy,prag,observații
+principal,Regresie logistică,0.544075,0.773678,0.555216,0.401378,0.844203,0.631256,0.390000,
+fără class_weight,Regresie logistică,0.544075,0.773677,0.555326,0.401378,0.844203,0.631256,0.240000,
+"prag fix 0,5",Regresie logistică,0.556167,0.773678,0.555216,0.490985,0.641304,0.733239,0.500000,
+cu leakage (voturi + keywords),Regresie logistică,0.625000,0.834223,0.659125,0.566176,0.697464,0.781870,0.480000,
+fără outliers în train,Regresie logistică,0.564315,0.773536,0.554027,0.456376,0.739130,0.702550,0.460000,"620 filme scoase (log_roi în afara 1,5×IQR)"
+fără premii,Regresie logistică,0.543124,0.774245,0.555952,0.400344,0.844203,0.629839,0.390000,
+test fără 2020–2021,Regresie logistică,0.573125,0.771691,0.572480,0.432251,0.850220,0.633758,0.390000,1570 filme
+"test, surse de acord",Regresie logistică,0.612865,0.714451,0.608466,0.483395,0.837061,0.594859,0.390000,817 filme cu buget și încasări confirmate de ≥ 2 surse
+split stratificat,Regresie logistică,0.576923,0.748474,0.582607,0.463158,0.764774,0.642673,0.450000,"aleator 70/15/15, doar pentru comparație"
+principal,Gradient boosting,0.554847,0.774676,0.526614,0.428150,0.788043,0.670444,0.450000,
+fără class_weight,Gradient boosting,0.557335,0.769614,0.521592,0.431120,0.788043,0.673749,0.300000,
+"prag fix 0,5",Gradient boosting,0.555866,0.774676,0.526614,0.452273,0.721014,0.699717,0.500000,
+cu leakage (voturi + keywords),Gradient boosting,0.661348,0.866964,0.689423,0.647569,0.675725,0.819641,0.600000,
+fără outliers în train,Gradient boosting,0.552239,0.772832,0.527060,0.441432,0.737319,0.688385,0.490000,"620 filme scoase (log_roi în afara 1,5×IQR)"
+fără premii,Gradient boosting,0.550402,0.772796,0.527863,0.417840,0.806159,0.656752,0.430000,
+test fără 2020–2021,Gradient boosting,0.589286,0.775127,0.553156,0.466581,0.799559,0.677707,0.450000,1570 filme
+"test, surse de acord",Gradient boosting,0.595899,0.688511,0.547048,0.478682,0.789137,0.589963,0.450000,817 filme cu buget și încasări confirmate de ≥ 2 surse
+split stratificat,Gradient boosting,0.604411,0.781205,0.637992,0.507886,0.746234,0.688815,0.460000,"aleator 70/15/15, doar pentru comparație"
+imputare knn,Regresie logistică,0.540012,0.775047,0.561028,0.395781,0.849638,0.622757,0.390000,
+imputare iterative,Regresie logistică,0.542373,0.775618,0.557128,0.400345,0.840580,0.630312,0.390000,

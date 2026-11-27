@@ -106,6 +106,8 @@ def add_features(df: pd.DataFrame, cpi: pd.DataFrame) -> pd.DataFrame:
     budget = df["budget"].astype(float)
     df["log_budget"] = np.log(budget)
     df["log_budget_real"] = np.log(budget * factor)        # dolari 2024
+    # pătratul: un model liniar poate prinde astfel forma de U a ratei de profit pe buget (EDA #42)
+    df["log_budget_real_sq"] = df["log_budget_real"] ** 2
     df["month_sin"], df["month_cos"] = _cyclic(df["release_month"] - 1, 12)
     df["weekday_sin"], df["weekday_cos"] = _cyclic(df["release_weekday"], 7)
     for c in COUNTS:
@@ -132,19 +134,30 @@ def load_dataset(path: Path = DATASET, threshold: float = THRESHOLD) -> pd.DataF
     return df
 
 
-def binary_columns(df: pd.DataFrame, leakage: bool = False) -> list[str]:
+def numeric_columns(leakage: bool = False, extra: tuple[str, ...] = (), exclude: tuple[str, ...] = ()) -> list[str]:
+    cols = NUMERIC + (LEAKAGE_NUMERIC if leakage else []) + list(extra)
+    return [c for c in cols if c not in exclude]
+
+
+def binary_columns(df: pd.DataFrame, leakage: bool = False, exclude: tuple[str, ...] = ()) -> list[str]:
     patterns = BINARY_PATTERNS + (LEAKAGE_BINARY_PATTERNS if leakage else [])
-    return [c for c in df.columns if any(c.startswith(p) for p in patterns)] + BINARY_FIXED
+    cols = [c for c in df.columns if any(c.startswith(p) for p in patterns)] + BINARY_FIXED
+    return [c for c in cols if c not in exclude]
 
 
-def model_columns(df: pd.DataFrame, leakage: bool = False) -> dict[str, list[str]]:
-    """Coloanele de intrare pe grupe; cu leakage=True se adaugă voturile și keywords."""
-    numeric = NUMERIC + (LEAKAGE_NUMERIC if leakage else [])
-    return {"numeric": numeric, "binary": binary_columns(df, leakage), "categorical": CATEGORICAL}
+def model_columns(df: pd.DataFrame, leakage: bool = False, extra: tuple[str, ...] = (),
+                  exclude: tuple[str, ...] = ()) -> dict[str, list[str]]:
+    """
+    Coloanele de intrare pe grupe. leakage=True adaugă voturile și keywords; `extra` adaugă coloane
+    numerice (de ex. log_budget_real_sq); `exclude` scoate coloane (de ex. premiile, pentru ablație).
+    """
+    return {"numeric": numeric_columns(leakage, extra, exclude),
+            "binary": binary_columns(df, leakage, exclude), "categorical": CATEGORICAL}
 
 
-def X_y(df: pd.DataFrame, target: str = "profitable", leakage: bool = False) -> tuple[pd.DataFrame, pd.Series]:
-    cols = [c for group in model_columns(df, leakage).values() for c in group]
+def X_y(df: pd.DataFrame, target: str = "profitable", leakage: bool = False, extra: tuple[str, ...] = (),
+        exclude: tuple[str, ...] = ()) -> tuple[pd.DataFrame, pd.Series]:
+    cols = [c for group in model_columns(df, leakage, extra, exclude).values() for c in group]
     return df[cols], df[target]
 
 
@@ -175,8 +188,8 @@ def _imputer(kind: str):
     raise ValueError(f"imputer necunoscut: {kind}")
 
 
-def build_preprocessor(model_kind: str = "linear", leakage: bool = False,
-                       imputer: str = "median") -> ColumnTransformer:
+def build_preprocessor(model_kind: str = "linear", leakage: bool = False, imputer: str = "median",
+                       extra: tuple[str, ...] = (), exclude: tuple[str, ...] = ()) -> ColumnTransformer:
     """
     model_kind="linear": imputare + StandardScaler (regresie logistică, kNN, SVM).
     model_kind="tree":   imputare, fără scalare (arborii nu depind de scară).
@@ -194,8 +207,8 @@ def build_preprocessor(model_kind: str = "linear", leakage: bool = False,
     onehot = OneHotEncoder(min_frequency=MIN_CATEGORY, handle_unknown="infrequent_if_exist",
                            sparse_output=False)
     pre = ColumnTransformer([
-        ("numeric", numeric, NUMERIC + (LEAKAGE_NUMERIC if leakage else [])),
-        ("binary", "passthrough", partial(binary_columns, leakage=leakage)),
+        ("numeric", numeric, numeric_columns(leakage, extra, exclude)),
+        ("binary", "passthrough", partial(binary_columns, leakage=leakage, exclude=exclude)),
         ("categorical", onehot, CATEGORICAL),
     ], verbose_feature_names_out=False)
     return pre.set_output(transform="pandas")
