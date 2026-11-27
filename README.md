@@ -198,6 +198,14 @@ python analysis/errors.py             # -> docs/error_analysis.md, docs/figures/
 
 Erori pe segmente (buget, gen, limbă, franciză, studio, istoric, surse în dezacord, distanța față de prag, an), COVID, cele mai sigure fals pozitive / negative, calibrare (Brier, reliability plot) și reziduurile regresiei. Folosește predicțiile salvate de `modeling/compare.py`.
 
+## Interpretabilitate (#58)
+
+```bash
+python analysis/interpret.py          # -> docs/interpretability.md, docs/figures/interpret_*.png, results/interpret/*.csv
+```
+
+Permutation importance pe test (gradient boosting și regresia logistică + buget²), coeficienții modelului liniar, SHAP (sumar și trei filme explicate), partial dependence pentru buget, istoric, lună și franciză, comparație cu informația mutuală din EDA.
+
 ## Surse excluse
 
 | Sursă | Motiv |
