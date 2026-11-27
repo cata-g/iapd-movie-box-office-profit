@@ -96,7 +96,7 @@ TYPES = [
     ("*_prev_profitable_rate", "raport (proporție)", "0–1"),
     ("original_language", "nominală", "7 categorii"),
     ("adaptation_type", "nominală", "10 categorii"),
-    ("genre_* (19)", "binară asimetrică", "1 = filmul are genul; 0 nu spune nimic despre film"),
+    ("genre_* (18)", "binară asimetrică", "1 = filmul are genul; 0 nu spune nimic despre film"),
     ("country_* (4)", "binară asimetrică", "o țară de producție poate fi în mai multe grupe"),
     ("major_studio, major_distributor, major_any, streaming_distributor", "binară asimetrică", ""),
     ("is_franchise, is_adaptation", "binară asimetrică", ""),

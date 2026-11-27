@@ -1,0 +1,9 @@
+genuri,model,F1,ROC-AUC,PR-AUC,precision,recall,prag
+18 coloane 0/1 (#41),Regresie logistică,0.544075,0.773678,0.555216,0.401378,0.844203,0.390000
+3 componente PCA,Regresie logistică,0.557764,0.773073,0.550402,0.424386,0.813406,0.420000
+5 componente PCA,Regresie logistică,0.531719,0.771984,0.550007,0.390017,0.835145,0.390000
+12 componente PCA (90%),Regresie logistică,0.560265,0.773069,0.560230,0.441545,0.766304,0.440000
+18 coloane 0/1 (#41),Gradient boosting,0.554847,0.774676,0.526614,0.428150,0.788043,0.450000
+3 componente PCA,Gradient boosting,0.553750,0.775155,0.525852,0.422710,0.802536,0.440000
+5 componente PCA,Gradient boosting,0.551171,0.773789,0.522106,0.417757,0.809783,0.430000
+12 componente PCA (90%),Gradient boosting,0.552757,0.774891,0.525247,0.442748,0.735507,0.480000
