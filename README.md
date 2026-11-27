@@ -166,6 +166,14 @@ python analysis/eda.py                # -> docs/eda.md, docs/figures/eda_*.png, 
 
 Statistici descriptive, outliers, date lipsă (MAR / MNAR), redundanță (Spearman, V Cramér) și relevanța față de țintă (MI, χ², Random Forest, Lasso), cu redundanța și relevanța calculate doar pe train. Rezultat: 2 duplicate și 4 coloane redundante scoase din model (`docs/eda.md` §8–§9).
 
+## Modele de bază (#41)
+
+```bash
+python modeling/baselines.py          # -> docs/baseline_results.md, results/baselines/*.csv (câteva minute)
+```
+
+Clasificare (`profitable`): Dummy, regresie logistică (și cu buget²), Random Forest, gradient boosting. Regresie (`log_roi`): Dummy, Ridge (și cu buget²), Random Forest, gradient boosting. Hiperparametrii și pragul de decizie se aleg pe validarea temporală; testul (2019–2024) se folosește o singură dată. Plus experimentele: class_weight, prag, leakage, outliers, premii, imputare, COVID, surse de acord, split stratificat.
+
 ## Surse excluse
 
 | Sursă | Motiv |

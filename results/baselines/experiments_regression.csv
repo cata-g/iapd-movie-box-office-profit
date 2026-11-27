@@ -1,0 +1,7 @@
+experiment,model,MAE log_roi,RMSE log_roi,R² log_roi,MAE ROI,MedAE ROI,F1 din regresie,n
+principal,Ridge,1.251038,1.643508,0.244825,2.125177,0.567681,0.182677,2118
+cu leakage,Ridge,1.160678,1.524809,0.349968,2.037077,0.525146,0.318248,2118
+fără outliers în train,Ridge,1.257170,1.685191,0.206033,2.111003,0.646030,0.213292,2118
+principal,Gradient boosting,1.242751,1.666078,0.223941,2.137704,0.759432,0.453782,2118
+cu leakage,Gradient boosting,1.041159,1.440187,0.420115,1.910867,0.574378,0.583682,2118
+fără outliers în train,Gradient boosting,1.266327,1.711870,0.180695,2.130280,0.805565,0.478261,2118
