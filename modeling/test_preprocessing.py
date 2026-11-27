@@ -89,6 +89,12 @@ def test_every_feature_used(df):
             col.startswith("has_") or col == "certification_missing", col
 
 
+def test_duplicates_removed(df):
+    from modeling.preprocessing import DUPLICATES
+    assert not df["imdb_id"].isin(DUPLICATES).any()
+    assert len(df) == len(pd.read_parquet(DATASET, columns=["imdb_id"])) - len(DUPLICATES)
+
+
 def test_threshold(df):
     assert df["profitable"].mean() == pytest.approx(0.3186, abs=1e-3)
     assert load_dataset(threshold=2)["profitable"].mean() > df["profitable"].mean()

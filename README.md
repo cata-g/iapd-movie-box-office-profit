@@ -158,6 +158,14 @@ python modeling/preprocessing.py      # dimensiunile split-urilor și echilibrul
 
 `modeling/preprocessing.py` transformă dataset-ul final în matrici de antrenare: split temporal (train ≤ 2014, validare 2015–2018, test 2019–2024), indicatori pentru istoricul lipsă, log pe buget și ROI, bugetul în dolari 2024, luna și ziua pe cerc (sin/cos), one-hot și scalare, toate ajustate doar pe train. Strategia pentru fiecare coloană: `docs/preprocessing.md`.
 
+## Analiza exploratorie (#42)
+
+```bash
+python analysis/eda.py                # -> docs/eda.md, docs/figures/eda_*.png, results/eda/*.csv
+```
+
+Statistici descriptive, outliers, date lipsă (MAR / MNAR), redundanță (Spearman, V Cramér) și relevanța față de țintă (MI, χ², Random Forest, Lasso), cu redundanța și relevanța calculate doar pe train. Rezultat: 2 duplicate și 4 coloane redundante scoase din model (`docs/eda.md` §8–§9).
+
 ## Surse excluse
 
 | Sursă | Motiv |
