@@ -190,6 +190,14 @@ python modeling/compare.py            # -> docs/results.md, results/final_metric
 
 Toate modelele pe același test temporal, cu intervale de încredere bootstrap (1.000 de eșantioane), test McNemar și diferențe pereche, curbe ROC / PR, regresie și pragurile ROI 2 / 2,5 / 3. Probabilitățile pe test ale fiecărui model: `results/compare/test_predictions.csv`.
 
+## Analiza erorilor (#57)
+
+```bash
+python analysis/errors.py             # -> docs/error_analysis.md, docs/figures/errors_*.png, results/errors/*.csv
+```
+
+Erori pe segmente (buget, gen, limbă, franciză, studio, istoric, surse în dezacord, distanța față de prag, an), COVID, cele mai sigure fals pozitive / negative, calibrare (Brier, reliability plot) și reziduurile regresiei. Folosește predicțiile salvate de `modeling/compare.py`.
+
 ## Surse excluse
 
 | Sursă | Motiv |

@@ -1,0 +1,3 @@
+model,Brier,"Brier, baseline (rata de bază)",probabilitate medie prezisă,% profitabile real
+Gradient boosting,0.195357,0.192699,0.447538,0.260623
+Regresie logistică + buget²,0.177715,0.192699,0.396623,0.260623
