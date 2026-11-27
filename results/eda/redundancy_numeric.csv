@@ -1,0 +1,6 @@
+a,b,Pearson,Spearman
+log_budget,log_budget_real,0.9217452773437068,0.9029297402597904
+log1p_cast_award_noms_before,log1p_cast_award_wins_before,0.8869697644333848,0.8418617886201287
+director_prev_mean_log_roi,director_prev_profitable_rate,0.739128068241821,0.8359284407471173
+cast_prev_mean_log_roi,cast_prev_profitable_rate,0.7467612849700745,0.7854906914096159
+log1p_director_award_noms_before,log1p_director_award_wins_before,0.8101043801996787,0.6939661230677957

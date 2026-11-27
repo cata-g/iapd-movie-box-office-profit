@@ -2,7 +2,7 @@
 
 Cod: `modeling/preprocessing.py`. Teste: `python -m pytest modeling`. Indicele de preț: `python extraction/cpi.py`.
 
-Dataset-ul de intrare: `data/processed/movies_dataset.parquet`, **18.056 filme**, 31,9% profitabile (ROI ≥ 2,5). Din cele 50 de caracteristici fără leakage (`extraction/columns.py`) rezultă 54 de coloane de intrare și **67 de coloane după preprocesare** (one-hot inclus).
+Dataset-ul de intrare: `data/processed/movies_dataset.parquet`, 18.056 filme, din care `load_dataset` scoate 2 duplicate găsite în EDA (`DUPLICATES`, `docs/eda.md` §8): rămân **18.054 filme**, 31,9% profitabile (ROI ≥ 2,5). Din cele 50 de caracteristici fără leakage (`extraction/columns.py`) rezultă 50 de coloane de intrare și **63 de coloane după preprocesare** (one-hot inclus), după ce EDA a scos 4 coloane redundante (vezi „Coloane redundante”).
 
 ## Două etape
 
@@ -13,11 +13,11 @@ Dataset-ul de intrare: `data/processed/movies_dataset.parquet`, **18.056 filme**
 
 | Split | Set | Filme | % din total | Ani | % profitabile |
 |---|---|---|---|---|---|
-| **temporal (principal)** | train | 13.624 | 75,5% | 1950–2014 | 32,5% |
+| **temporal (principal)** | train | 13.623 | 75,5% | 1950–2014 | 32,5% |
 | | validare | 2.313 | 12,8% | 2015–2018 | 33,5% |
-| | test | 2.119 | 11,7% | 2019–2024 | 26,1% |
-| stratificat (comparație) | train | 12.638 | 70,0% | 1950–2024 | 31,9% |
-| | validare | 2.709 | 15,0% | 1950–2024 | 31,9% |
+| | test | 2.118 | 11,7% | 2019–2024 | 26,1% |
+| stratificat (comparație) | train | 12.637 | 70,0% | 1950–2024 | 31,9% |
+| | validare | 2.708 | 15,0% | 1950–2024 | 31,9% |
 | | test | 2.709 | 15,0% | 1950–2024 | 31,9% |
 
 - **De ce temporal:** așa s-ar folosi modelul în realitate, pe filme care încă nu s-au lansat. La un split aleator, un film din 2010 din train ar fi învățat lângă filme din 2015, iar tendințele din viitor ar ajunge în antrenare. Tăierea pe an calendaristic (nu pe procente exacte) face setul de test ușor de descris: „filmele din 2019–2024”.
@@ -41,7 +41,7 @@ Dataset-ul de intrare: `data/processed/movies_dataset.parquet`, **18.056 filme**
 
 | Coloană nouă | Din | Transformare | Motiv |
 |---|---|---|---|
-| `log_budget` | `budget` | log | Bugetul e foarte asimetric (skewness 4,31 → −0,48 după log). |
+| `log_budget` | `budget` | log | Bugetul e foarte asimetric (skewness 4,31 → −0,48 după log). Doar pentru EDA; în model intră varianta ajustată. |
 | `log_budget_real` | `budget`, `release_year` | log(buget × CPI(2024) / CPI(an)) | Bugetul în dolari 2024. 5 mil. $ în 1965 erau o producție mare, iar în 2015 una mică. Vezi mai jos. |
 | `month_sin`, `month_cos` | `release_month` | poziția pe un cerc cu 12 puncte | Decembrie (12) și ianuarie (1) par departe ca numere, dar sunt vecine și fac parte din același sezon de sărbători; pe cerc ajung alăturate. |
 | `weekday_sin`, `weekday_cos` | `release_weekday` | cerc cu 7 puncte | Același motiv: duminică și luni sunt vecine. |
@@ -51,7 +51,17 @@ Dataset-ul de intrare: `data/processed/movies_dataset.parquet`, **18.056 filme**
 | ținta `log_roi` | `roi` | log | ROI are skewness 112 și kurtosis 13.679; după log, −0,75. |
 | ținta `profitable` | `roi` | ROI ≥ prag | `load_dataset(threshold=2 / 2,5 / 3)`: 38,5% / 31,9% / 26,8% profitabile. |
 
-**Coloane scoase în favoarea variantei transformate:** `budget`, `release_month`, `release_weekday`, numărătorile brute, `director_prev_mean_roi` și `cast_prev_mean_roi`. Ultimele două conțin aceeași informație ca `*_prev_mean_log_roi`, dar cu ROI-uri extreme care ar domina un model liniar. Lista completă e `REPLACED` în cod; testul `test_every_feature_used` verifică că fiecare caracteristică din `extraction/columns.py` intră direct sau prin înlocuitorul ei. Ce mai eliminăm ca redundant (de ex. `major_any` față de `major_studio` + `major_distributor`) se decide în EDA (#42).
+**Coloane scoase în favoarea variantei transformate:** `budget`, `release_month`, `release_weekday`, numărătorile brute, `director_prev_mean_roi` și `cast_prev_mean_roi`. Ultimele două conțin aceeași informație ca `*_prev_mean_log_roi`, dar cu ROI-uri extreme care ar domina un model liniar. Lista completă e `REPLACED` în cod; testul `test_every_feature_used` verifică că fiecare caracteristică din `extraction/columns.py` intră direct sau prin înlocuitorul ei. 
+### Coloane redundante (decise în EDA, #42)
+
+Patru coloane se calculează exact din altele ale modelului (verificat pe 100% din filme, `docs/eda.md` §9) și sunt scoase:
+
+| Coloană | De ce e redundantă |
+|---|---|
+| `log_budget` | = `log_budget_real` − log(factorul CPI al anului); cu `release_year` în model nu aduce nimic nou |
+| `major_any` | = `major_studio` SAU `major_distributor` |
+| `is_english` | = `original_language == "en"` (în one-hot) |
+| `is_adaptation` | = `adaptation_type != "none"` (în one-hot) |
 
 `certification` rămâne ordinală (G = 0 … NC-17 = 4): ordinea are sens, de la public general la restricționat.
 

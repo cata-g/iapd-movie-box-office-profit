@@ -53,27 +53,37 @@ COUNTS = ["director_prev_films", "cast_prev_films",
           "cast_award_noms_before", "cast_award_wins_before"]
 
 NUMERIC = [
-    "log_budget", "log_budget_real", "release_year", "runtime_min", "sequel_number", "certification",
+    "log_budget_real", "release_year", "runtime_min", "sequel_number", "certification",
     "month_sin", "month_cos", "weekday_sin", "weekday_cos",
     *[f"log1p_{c}" for c in COUNTS],
     "director_prev_mean_log_roi", "director_prev_profitable_rate",
     "cast_prev_mean_log_roi", "cast_prev_profitable_rate",
 ]
 BINARY_PATTERNS = ["genre_", "country_"]
-BINARY_FIXED = ["major_studio", "major_distributor", "major_any", "streaming_distributor",
-                "is_english", "is_franchise", "is_adaptation",
+BINARY_FIXED = ["major_studio", "major_distributor", "streaming_distributor", "is_franchise",
                 "has_director_history", "has_cast_history", "certification_missing"]
 CATEGORICAL = ["original_language", "adaptation_type"]
 
 # Caracteristicile din extraction/columns.py care nu intră direct, ci prin altă coloană
 REPLACED = {
-    "budget": ["log_budget", "log_budget_real"],
+    "budget": ["log_budget_real"],
     "release_month": ["month_sin", "month_cos"],
     "release_weekday": ["weekday_sin", "weekday_cos"],
     **{c: [f"log1p_{c}"] for c in COUNTS},
     # aceeași informație ca *_prev_mean_log_roi, dar cu ROI-uri extreme (skewness > 50)
     "director_prev_mean_roi": ["director_prev_mean_log_roi"],
     "cast_prev_mean_roi": ["cast_prev_mean_log_roi"],
+    # redundante: se calculează exact din alte coloane (EDA #42, docs/eda.md §9). log_budget rămâne
+    # în dataframe pentru EDA, dar = log_budget_real - log(factorul CPI al anului), redundant cu anul
+    "major_any": ["major_studio", "major_distributor"],     # = major_studio SAU major_distributor
+    "is_english": ["original_language"],                    # = original_language == "en"
+    "is_adaptation": ["adaptation_type"],                   # = adaptation_type != "none"
+}
+
+# Duplicate găsite în EDA (#42, docs/eda.md §8): același infobox Wikipedia la două imdb_id
+DUPLICATES = {
+    "tt10192566": "Alone (2020): cifrele sunt ale lui tt7711170, din același infobox Wikipedia",
+    "tt0075143": "The Message (1976), versiunea arabă: aceeași producție ca tt0074896, buget numărat de două ori",
 }
 
 # Doar pentru experimentul leakage vs. no-leakage (#41)
@@ -112,8 +122,9 @@ def add_features(df: pd.DataFrame, cpi: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_dataset(path: Path = DATASET, threshold: float = THRESHOLD) -> pd.DataFrame:
-    """Dataset-ul final cu caracteristicile derivate și țintele `profitable` (la prag) și `log_roi`."""
+    """Dataset-ul final (fără DUPLICATES) cu caracteristicile derivate și țintele `profitable` (la prag) și `log_roi`."""
     df = pd.read_parquet(path)
+    df = df[~df["imdb_id"].isin(DUPLICATES)].reset_index(drop=True)
     df["release_date"] = pd.to_datetime(df["release_date"])
     df = add_features(df, pd.read_parquet(CPI_PATH))
     df["profitable"] = (df["roi"] >= threshold).astype(int)

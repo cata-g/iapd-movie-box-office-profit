@@ -1,0 +1,13 @@
+a,b,V Cramér
+is_english,original_language,1.0
+is_adaptation,adaptation_type,1.0
+major_distributor,major_any,0.9753559857817148
+original_language,country_us,0.7692074200450866
+is_english,country_us,0.7689016783743424
+original_language,country_asia,0.7651424456895628
+major_studio,major_any,0.7354513981580576
+major_studio,major_distributor,0.6987831291296229
+original_language,certification_missing,0.5860145243969728
+is_english,certification_missing,0.5833090878360765
+country_us,certification_missing,0.5712108767233413
+is_english,country_asia,0.5510056042811063
