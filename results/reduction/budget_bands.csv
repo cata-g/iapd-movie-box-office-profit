@@ -1,0 +1,16 @@
+discretizare,banda,buget (mil. $ 2024),filme (train),% profitabile
+lățime egală,1,"0,0 – 0,1",120,0.666667
+lățime egală,2,"0,1 – 0,9",718,0.561281
+lățime egală,3,"0,9 – 7,6",3815,0.343906
+lățime egală,4,"7,6 – 63,5",7272,0.275715
+lățime egală,5,"63,5 – ∞",1698,0.368080
+frecvență egală,1,"0,0 – 3,6",2724,0.456314
+frecvență egală,2,"3,6 – 9,9",2725,0.276330
+frecvență egală,3,"9,9 – 21,2",2724,0.261380
+frecvență egală,4,"21,2 – 43,8",2725,0.280000
+frecvență egală,5,"43,8 – ∞",2725,0.350092
+entropie (arbore),1,"0,0 – 1,6",1408,0.535511
+entropie (arbore),2,"1,6 – 3,9",1454,0.371389
+entropie (arbore),3,"3,9 – 51,2",8491,0.272053
+entropie (arbore),4,"51,2 – 149,9",1878,0.331203
+entropie (arbore),5,"149,9 – ∞",392,0.507653

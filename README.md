@@ -174,6 +174,14 @@ python modeling/baselines.py          # -> docs/baseline_results.md, results/bas
 
 Clasificare (`profitable`): Dummy, regresie logistică (și cu buget²), Random Forest, gradient boosting. Regresie (`log_roi`): Dummy, Ridge (și cu buget²), Random Forest, gradient boosting. Hiperparametrii și pragul de decizie se aleg pe validarea temporală; testul (2019–2024) se folosește o singură dată. Plus experimentele: class_weight, prag, leakage, outliers, premii, imputare, COVID, surse de acord, split stratificat.
 
+## Reducere și discretizare (#43)
+
+```bash
+python analysis/reduction.py          # -> docs/reduction.md, docs/figures/reduction_*.png, results/reduction/*.csv
+```
+
+PCA pe genuri și pe numerice (scree, Kaiser, încărcări, stabilitate bootstrap), analiză factorială pe genuri (KMO, Bartlett, varimax vs promax), bugetul în 5 benzi (lățime egală, frecvență egală, entropie) comparat cu bugetul continuu, modele cu PCA în loc de genuri și pragurile ROI 2 / 2,5 / 3. Concluzie: nici PCA, nici benzile nu bat reprezentarea din #40, deci rămâne cea folosită.
+
 ## Surse excluse
 
 | Sursă | Motiv |

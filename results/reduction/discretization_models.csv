@@ -1,0 +1,10 @@
+reprezentare buget,model,F1,ROC-AUC,PR-AUC,precision,recall,prag
+continuu (log_budget_real),Regresie logistică,0.544075,0.773678,0.555216,0.401378,0.844203,0.390000
+continuu + pătrat,Regresie logistică,0.562544,0.769068,0.531332,0.461182,0.721014,0.430000
+"5 benzi, lățime egală",Regresie logistică,0.535077,0.763282,0.539852,0.398230,0.815217,0.380000
+"5 benzi, frecvență egală",Regresie logistică,0.534884,0.765823,0.539686,0.415663,0.750000,0.420000
+"5 benzi, entropie (arbore)",Regresie logistică,0.542645,0.768733,0.536593,0.411820,0.795290,0.390000
+continuu (log_budget_real),Gradient boosting,0.554847,0.774676,0.526614,0.428150,0.788043,0.450000
+"5 benzi, lățime egală",Gradient boosting,0.553059,0.769767,0.515233,0.421905,0.802536,0.440000
+"5 benzi, frecvență egală",Gradient boosting,0.542222,0.765917,0.516603,0.417400,0.773551,0.440000
+"5 benzi, entropie (arbore)",Gradient boosting,0.545559,0.766429,0.516186,0.400169,0.856884,0.390000
