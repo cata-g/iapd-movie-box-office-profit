@@ -162,10 +162,10 @@ def fit_eval(pipe: Pipeline, cols: list[str], train, val, test) -> dict:
     return clf_metrics(test["profitable"], pipe.predict_proba(test[cols])[:, 1], t)
 
 
-def pca_pipe(spec, k: int, genres: list[str]) -> tuple[Pipeline, list[str]]:
+def pca_pipe(spec, k: int, genres: list[str], columns: list[str]) -> tuple[Pipeline, list[str]]:
     """Genurile înlocuite de primele k componente PCA (ajustate pe train), restul ca în #40."""
     base = build_preprocessor(spec.kind, exclude=tuple(genres))
-    X_cols = list(X_y(pd.DataFrame(columns=_all_cols()), exclude=tuple(genres))[0].columns)
+    X_cols = list(X_y(pd.DataFrame(columns=columns), exclude=tuple(genres))[0].columns)
     pca = Pipeline([("center", StandardScaler(with_std=False)), ("pca", PCA(n_components=k, random_state=SEED))])
     if spec.kind == "linear":
         pca.steps.append(("scale", StandardScaler()))
@@ -174,23 +174,16 @@ def pca_pipe(spec, k: int, genres: list[str]) -> tuple[Pipeline, list[str]]:
     return Pipeline([("pre", pre), ("model", model)]), X_cols + genres
 
 
-def band_pipe(spec, edges: np.ndarray) -> tuple[Pipeline, list[str]]:
+def band_pipe(spec, edges: np.ndarray, columns: list[str]) -> tuple[Pipeline, list[str]]:
     """`log_budget_real` înlocuit de banda de buget (one-hot); restul ca în #40."""
     excl = ("log_budget_real",)
     base = build_preprocessor(spec.kind, exclude=excl)
-    X_cols = list(X_y(pd.DataFrame(columns=_all_cols()), exclude=excl)[0].columns)
+    X_cols = list(X_y(pd.DataFrame(columns=columns), exclude=excl)[0].columns)
     pre = ColumnTransformer([("rest", base, X_cols),
                              ("band", OneHotEncoder(handle_unknown="ignore", sparse_output=False), ["budget_band"])],
                             verbose_feature_names_out=False)
     model = clone(spec.estimator).set_params(**PARAMS[spec.name])
     return Pipeline([("pre", pre), ("model", model)]), X_cols + ["budget_band"]
-
-
-_COLS: list[str] = []
-
-
-def _all_cols() -> list[str]:
-    return _COLS
 
 
 # ---------------------------------------------------------------------------
@@ -271,10 +264,8 @@ def fmt(df: pd.DataFrame, pct_cols=(), digits=3) -> pd.DataFrame:
 
 
 def main() -> None:
-    global _COLS
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     df = load_dataset()
-    _COLS = list(df.columns)
     train, val, test = temporal_split(df)
     genres = genre_columns(df)
 
@@ -303,7 +294,7 @@ def main() -> None:
             rows.append({"reprezentare buget": "continuu + pătrat", "model": spec.name,
                          **_short(run_clf(sq, PARAMS[sq.name], train, val, {"test": test})["test"])})
         for name, e in edges.items():
-            pipe, cols = band_pipe(spec, e)
+            pipe, cols = band_pipe(spec, e, list(df.columns))
             res = fit_eval(pipe, cols, add_band(train, e), add_band(val, e), add_band(test, e))
             rows.append({"reprezentare buget": f"5 benzi, {name}", "model": spec.name, **_short(res)})
     disc = pd.DataFrame(rows)
@@ -315,7 +306,7 @@ def main() -> None:
         pca_rows.append({"genuri": f"{len(genres)} coloane 0/1 (#41)", "model": spec.name,
                          **_short(run_clf(spec, PARAMS[spec.name], train, val, {"test": test})["test"])})
         for k in sorted({3, 5, k90}):
-            pipe, cols = pca_pipe(spec, k, genres)
+            pipe, cols = pca_pipe(spec, k, genres, list(df.columns))
             pca_rows.append({"genuri": f"{k} componente PCA" + (" (90%)" if k == k90 else ""), "model": spec.name,
                              **_short(fit_eval(pipe, cols, train, val, test))})
     pca_models = pd.DataFrame(pca_rows)

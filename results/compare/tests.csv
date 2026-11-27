@@ -1,0 +1,4 @@
+A,B,"A corect, B greșit","A greșit, B corect",χ² (corecție de continuitate),p (χ²),"p (exact, binomial)",Δ ROC-AUC (A − B),Δ ROC-AUC IC,Δ F1 (A − B),Δ F1 IC
+Random Forest,Gradient boosting,77,179,39.847656,0.000000,0.000000,0.001828,"[-0,01; 0,01]",-0.014223,"[-0,03; 0,00]"
+Regresie logistică + buget²,Random Forest,316,135,71.840355,0.000000,0.000000,-0.007330,"[-0,02; 0,01]",0.022051,"[-0,00; 0,05]"
+Random Forest,Dummy (clasa majoritară),471,719,51.268067,0.000000,0.000000,0.276709,"[0,26; 0,30]",0.540853,"[0,51; 0,57]"

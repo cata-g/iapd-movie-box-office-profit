@@ -1,0 +1,10 @@
+{
+  "Dummy (clasa majoritară)": 0.5,
+  "Regresie logistică": 0.38999999999999996,
+  "Regresie logistică + buget²": 0.42999999999999994,
+  "Random Forest": 0.38999999999999996,
+  "Gradient boosting": 0.4499999999999999,
+  "Regresie logistică, genuri → 12 PCA": 0.43999999999999995,
+  "Regresie logistică + leakage": 0.4799999999999999,
+  "Gradient boosting + leakage": 0.6
+}
