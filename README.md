@@ -182,6 +182,14 @@ python analysis/reduction.py          # -> docs/reduction.md, docs/figures/reduc
 
 PCA pe genuri și pe numerice (scree, Kaiser, încărcări, stabilitate bootstrap), analiză factorială pe genuri (KMO, Bartlett, varimax vs promax), bugetul în 5 benzi (lățime egală, frecvență egală, entropie) comparat cu bugetul continuu, modele cu PCA în loc de genuri și pragurile ROI 2 / 2,5 / 3. Concluzie: nici PCA, nici benzile nu bat reprezentarea din #40, deci rămâne cea folosită.
 
+## Comparația finală (#56)
+
+```bash
+python modeling/compare.py            # -> docs/results.md, results/final_metrics.csv, results/compare/*.csv
+```
+
+Toate modelele pe același test temporal, cu intervale de încredere bootstrap (1.000 de eșantioane), test McNemar și diferențe pereche, curbe ROC / PR, regresie și pragurile ROI 2 / 2,5 / 3. Probabilitățile pe test ale fiecărui model: `results/compare/test_predictions.csv`.
+
 ## Surse excluse
 
 | Sursă | Motiv |
